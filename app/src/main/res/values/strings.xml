@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Mis Finanzas</string>
+    <string name="widget_descripcion">Totales del mes y captura rápida de gastos</string>
+</resources>

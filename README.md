@@ -1,0 +1,117 @@
+# Mis Finanzas
+
+App Android personal que **registra tus gastos sola leyendo las notificaciones** de Google Wallet y de tus
+bancos. Kotlin + Jetpack Compose + Room. No usa servidor ni internet: todo se queda en tu teléfono.
+No está en la Play Store; se instala con ADB.
+
+## Qué hace
+
+- Lee las notificaciones de Google Wallet, BBVA, Nu, RappiCard, Banamex y Mercado Pago y registra cada
+  compra con su comercio, monto, tarjeta y categoría.
+- Evita duplicados: si Wallet y el banco avisan del mismo pago (mismo monto, mismo banco, menos de 10 min
+  de diferencia) se guarda uno solo.
+- Lo que no sabe leer lo guarda en "Recolectadas" para que tú lo etiquetes (gasto, ingreso,
+  transferencia o ignorar).
+- Pantalla de tarjetas con fecha de corte y fecha límite de pago, y aviso diario cuando se acerca el límite.
+- Widget con los totales del mes y captura rápida de gastos a mano.
+- Scripts en Python para cargar los movimientos de tus estados de cuenta en PDF (lo que se pagó sin
+  notificación).
+
+## Carpetas
+
+```
+app/src/main/java/com/misfinanzas/
+  WalletListener.kt   Servicio que recibe cada notificación
+  Parsers.kt          Un lector por app + nombres de tarjeta + tipos + "gemelas" (duplicados)
+  Categorias.kt       Reglas comercio → categoría (EL ORDEN IMPORTA)
+  Registro.kt         Única vía de escritura: llaves anti-duplicado, fusión, importar archivo
+  Ciclos.kt           Fechas de corte / límite de pago
+  Recordatorios.kt    Aviso diario de fecha límite
+  data/Db.kt          Base de datos (Room)
+  ui/                 Pantallas
+  widget/             Widget + ventana de captura rápida
+app/src/test/         Pruebas de los lectores y de las fechas
+herramientas/         Scripts Python para estados de cuenta
+estados/              Tus PDFs y movimientos.csv   (NO se sube a git)
+respaldos/            Copias de tu base de datos   (NO se sube a git)
+```
+
+## Compilar e instalar
+
+Necesitas JDK 17 y el Android SDK (o Android Studio, que trae ambos).
+
+```bash
+echo "sdk.dir=/ruta/a/android-sdk" > local.properties     # solo si no usas Android Studio
+export JAVA_HOME=/ruta/a/jdk17
+./gradlew testDebugUnitTest assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Para ADB inalámbrico: en el teléfono, Opciones de desarrollador → Depuración inalámbrica →
+"Vincular con código" y luego `adb pair IP:PUERTO` y `adb connect IP:PUERTO`.
+
+**Después de instalar**, abre la app y dale permiso de **acceso a notificaciones** (Ajustes →
+Notificaciones → Acceso a notificaciones → Mis Finanzas). Sin eso no registra nada.
+
+## Adaptarla a ti
+
+- **Tus tarjetas**: dalas de alta en la pantalla Tarjetas con su día de corte y día límite de pago.
+- **Apodo de tarjeta en Wallet**: si en Google Wallet le pusiste un nombre a una tarjeta, agrégalo en
+  `Tarjetas.canonica` de `Parsers.kt` para que se agrupe con el banco correcto.
+- **Categorías**: agrega en `Categorias.kt` los comercios que uses seguido. El orden importa (por ejemplo,
+  "OXXO GAS" debe ir a Gasolina antes de que "OXXO" lo mande a Súper).
+- **Otro banco**: escribe un `object` nuevo que implemente `FuenteNotificacion` en `Parsers.kt`, agrégalo a
+  `Fuentes.todas`, su paquete a `<queries>` en `AndroidManifest.xml`, y una prueba en `ParsersTest.kt`.
+  Las notificaciones que juntes en "Recolectadas" sirven de ejemplo para escribirlo.
+
+## Tipos de movimiento
+
+`gasto`, `ingreso`, `transferencia`. Solo `gasto` suma en "Gastado este mes". Los pagos de tarjeta y
+movimientos entre tus cuentas son transferencias.
+
+## Estados de cuenta (opcional, mensual)
+
+Sirve para cargar lo que no llegó por notificación. Requiere Python 3 con `pdfplumber`
+(`pip install pdfplumber`).
+
+```bash
+# 1. Pon cada PDF en estados/<banco>/  (carpetas: rappi, nu, bbva, banamex, mercadopago)
+#    Fíate del periodo impreso dentro del PDF, no del nombre del archivo.
+# 2. PDF → texto (solo procesa los que no tienen .txt)
+python -I herramientas/pdf_a_texto.py estados
+# 3. Extraer y cuadrar contra los totales del banco → estados/movimientos.csv
+python -I herramientas/extraer_estados.py estados/
+# 4. Copiar la base del teléfono (también los archivos -wal y -shm) y simular la carga
+adb exec-out run-as com.misfinanzas cat databases/finanzas.db > respaldos/finanzas.db
+adb exec-out run-as com.misfinanzas cat databases/finanzas.db-wal > respaldos/finanzas.db-wal
+python -I herramientas/importar_estados.py estados/movimientos.csv respaldos/finanzas.db
+# 5. Si todo se ve bien: generar el archivo y dejar que la app lo cargue al abrirse
+python -I herramientas/importar_estados.py estados/movimientos.csv respaldos/finanzas.db --exportar importar.json
+adb exec-in run-as com.misfinanzas sh -c 'cat > files/importar.tmp' < importar.json
+adb shell run-as com.misfinanzas mv files/importar.tmp files/importar.json
+adb shell am start -n com.misfinanzas/.MainActivity     # logcat: "Registro: Importados N movimientos"
+```
+
+En el paso 3 cada línea debe decir `[OK]`. Un `[DIF]` solo es aceptable si lo explican mensualidades,
+intereses o ajustes; si no, tu banco tiene un formato que el lector no entiende.
+
+**Qué se carga** (con `fuente = 'estado'`, a las 12:00):
+
+| En el estado | En la app |
+|---|---|
+| compra | gasto, categoría según `Categorias.kt` |
+| reembolso, cashback | ingreso |
+| interés, IVA, comisión | gasto, categoría "Intereses y comisiones" |
+| pago de tarjeta, mensualidad ("02 DE 03"), traspaso a meses, disposición a Cuenta Nu | no se carga |
+
+Se puede repetir sin duplicar: cada movimiento lleva una llave única, y lo que la app ya capturó por
+notificación (misma tarjeta y monto, ±2 días) se salta.
+
+Nota: el lector de Mercado Pago asume que el estado es de 2026 (`anio = 2026` en `extraer_estados.py`);
+cámbialo si es de otro año.
+
+## Cuidado con tus datos
+
+- **Nunca reemplaces el archivo de la base en el teléfono**: para cargas masivas usa `files/importar.json`.
+- Antes de instalar una versión que cambie la base (migración), haz una copia a `respaldos/`.
+- `estados/`, `respaldos/`, `*.db`, `*.csv`, `*.json` y `*.pdf` están en `.gitignore`: no los subas.

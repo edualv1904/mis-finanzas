@@ -1,0 +1,19 @@
+# Compilación
+.gradle/
+.kotlin/
+build/
+local.properties
+*.iml
+.idea/
+__pycache__/
+
+# Datos personales: NUNCA subirlos
+estados/
+respaldos/
+*.db
+*.db-wal
+*.db-shm
+*.pdf
+*.csv
+importar.json
+*.png

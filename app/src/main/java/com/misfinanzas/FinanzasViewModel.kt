@@ -1,0 +1,83 @@
+package com.misfinanzas
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.misfinanzas.data.FinanzasDb
+import com.misfinanzas.data.NotificacionCruda
+import com.misfinanzas.data.Nota
+import com.misfinanzas.data.TarjetaConfig
+import com.misfinanzas.data.Transaccion
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import java.time.YearMonth
+import java.time.ZoneId
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class FinanzasViewModel(app: Application) : AndroidViewModel(app) {
+    private val dao = FinanzasDb.get(app).dao()
+    private val zona = ZoneId.systemDefault()
+
+    private val _mes = MutableStateFlow(YearMonth.now())
+    val mes: StateFlow<YearMonth> = _mes.asStateFlow()
+
+    val transacciones: StateFlow<List<Transaccion>> = _mes
+        .flatMapLatest { m ->
+            val desde = m.atDay(1).atStartOfDay(zona).toInstant().toEpochMilli()
+            val hasta = m.plusMonths(1).atDay(1).atStartOfDay(zona).toInstant().toEpochMilli()
+            dao.observarRango(desde, hasta)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val tarjetas: StateFlow<List<String>> = dao.observarTarjetas()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val crudas: StateFlow<List<NotificacionCruda>> = dao.observarCrudas()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val crudasSinRevisar: StateFlow<Int> = dao.observarCrudasSinRevisar()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    fun etiquetar(n: NotificacionCruda, etiqueta: String?) = viewModelScope.launch { dao.etiquetarCruda(n.id, etiqueta) }
+
+    fun borrarIgnoradas() = viewModelScope.launch { dao.borrarCrudasIgnoradas() }
+
+    val notas: StateFlow<List<Nota>> = dao.observarNotas()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun guardarNota(n: Nota) = viewModelScope.launch { dao.guardarNota(n) }
+
+    fun eliminarNota(n: Nota) = viewModelScope.launch { dao.eliminarNota(n) }
+
+    val tarjetasConfig: StateFlow<List<TarjetaConfig>> = dao.observarTarjetasConfig()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val primeraFecha: StateFlow<Long?> = dao.observarPrimeraFecha()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Movimientos de los últimos 3 meses: alcanzan para calcular los periodos de todas las tarjetas. */
+    val recientes: StateFlow<List<Transaccion>> = dao.observarRango(
+        desde = YearMonth.now().minusMonths(3).atDay(1).atStartOfDay(zona).toInstant().toEpochMilli(),
+        hasta = Long.MAX_VALUE,
+    ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun guardarTarjeta(t: TarjetaConfig) = viewModelScope.launch { dao.guardarTarjeta(t) }
+
+    fun eliminarTarjeta(t: TarjetaConfig) = viewModelScope.launch { dao.eliminarTarjeta(t) }
+
+    fun cambiarMes(delta: Long) {
+        _mes.value = _mes.value.plusMonths(delta)
+    }
+
+    fun guardar(t: Transaccion, categoriaCambio: Boolean) = viewModelScope.launch {
+        Registro.guardar(getApplication(), t, categoriaCambio)
+    }
+
+    fun eliminar(t: Transaccion) = viewModelScope.launch { Registro.eliminar(getApplication(), t) }
+}
