@@ -1,19 +1,26 @@
 # Mis Finanzas
 
 App Android personal que **registra tus gastos sola leyendo las notificaciones** de Google Wallet y de tus
-bancos. Kotlin + Jetpack Compose + Room. No usa servidor ni internet: todo se queda en tu teléfono.
+bancos. Kotlin + Jetpack Compose + Room. No usa servidor: todo se queda en tu teléfono (solo usa
+internet para dibujar el mapa y escribir direcciones).
 No está en la Play Store; se instala con ADB.
 
 ## Qué hace
 
 - Lee las notificaciones de Google Wallet, BBVA, Nu, RappiCard, Banamex y Mercado Pago y registra cada
   compra con su comercio, monto, tarjeta y categoría.
-- Evita duplicados: si Wallet y el banco avisan del mismo pago (mismo monto, mismo banco, menos de 10 min
-  de diferencia) se guarda uno solo.
+- Evita duplicados: si Wallet y el banco avisan del mismo pago (mismo monto y banco, y casi a la vez o con
+  un comercio parecido hasta 48 h después) se guarda uno solo. Lo que marques como "Es duplicado de" no
+  se vuelve a registrar.
 - Lo que no sabe leer lo guarda en "Recolectadas" para que tú lo etiquetes (gasto, ingreso,
   transferencia o ignorar).
 - Pantalla de tarjetas con fecha de corte y fecha límite de pago, y aviso diario cuando se acerca el límite.
-- Widget con los totales del mes y captura rápida de gastos a mano.
+- Compras a meses: pasas una compra a N meses y la app suma cada mensualidad en su mes, no la compra entera.
+- Huella, rostro o PIN para entrar (se vuelve a pedir tras 60 s fuera de la app).
+- "Ocultar cantidades" (el ojo de arriba) para enseñar la app sin mostrar cifras; también aplica al widget.
+- Mapa de gastos: cada compra en persona guarda dónde estabas al pagar (una sola lectura de ubicación,
+  no te sigue). Las compras en línea y suscripciones no se ubican. También puedes poner el lugar a mano.
+- Widget con lo gastado esta semana y hoy, y captura rápida de gastos a mano.
 - Scripts en Python para cargar los movimientos de tus estados de cuenta en PDF (lo que se pagó sin
   notificación).
 
@@ -27,6 +34,9 @@ app/src/main/java/com/misfinanzas/
   Registro.kt         Única vía de escritura: llaves anti-duplicado, fusión, importar archivo
   Ciclos.kt           Fechas de corte / límite de pago
   Recordatorios.kt    Aviso diario de fecha límite
+  Meses.kt            Compras a meses: reparto de mensualidades
+  Ubicacion.kt        Ubicación de cada compra en persona + dirección escrita
+  Ajustes.kt          Preferencias (huella, ocultar cantidades)
   data/Db.kt          Base de datos (Room)
   ui/                 Pantallas
   widget/             Widget + ventana de captura rápida
@@ -51,7 +61,24 @@ Para ADB inalámbrico: en el teléfono, Opciones de desarrollador → Depuració
 "Vincular con código" y luego `adb pair IP:PUERTO` y `adb connect IP:PUERTO`.
 
 **Después de instalar**, abre la app y dale permiso de **acceso a notificaciones** (Ajustes →
-Notificaciones → Acceso a notificaciones → Mis Finanzas). Sin eso no registra nada.
+Notificaciones → Acceso a notificaciones → Mis Finanzas). Sin eso no registra nada. Para el mapa, dale
+ubicación **"Permitir todo el tiempo"**: el pago llega con la app cerrada.
+
+### Mapa (opcional): tu propia llave de Google Maps
+
+Sin llave la app funciona igual, solo no aparecen la pantalla "Mapa" ni "Elegir en el mapa".
+
+1. En [console.cloud.google.com](https://console.cloud.google.com) crea un proyecto y habilita
+   **Maps SDK for Android** (el mapa en apps Android no tiene costo).
+2. **APIs y servicios → Credenciales → Crear credenciales → Clave de API.**
+3. Restríngela: *Apps para Android* con el paquete `com.misfinanzas` y el SHA-1 de tu llave de firma
+   (`keytool -list -v -keystore ~/.android/debug.keystore -storepass android`), y *Restringir clave* solo a
+   Maps SDK for Android.
+4. Ponla en `local.properties` (no se sube a git):
+   ```
+   MAPS_API_KEY=tu_llave
+   ```
+5. Vuelve a compilar.
 
 ## Adaptarla a ti
 
@@ -115,3 +142,4 @@ cámbialo si es de otro año.
 - **Nunca reemplaces el archivo de la base en el teléfono**: para cargas masivas usa `files/importar.json`.
 - Antes de instalar una versión que cambie la base (migración), haz una copia a `respaldos/`.
 - `estados/`, `respaldos/`, `*.db`, `*.csv`, `*.json` y `*.pdf` están en `.gitignore`: no los subas.
+- Tu llave de Google Maps va en `local.properties`, que también está en `.gitignore`. Nunca la pongas en el código.

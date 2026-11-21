@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -55,7 +56,13 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.misfinanzas.R
+import com.misfinanzas.Meses
 import com.misfinanzas.Tipos
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.res.painterResource
+import com.misfinanzas.Ajustes
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.misfinanzas.FinanzasViewModel
 import com.misfinanzas.data.Transaccion
 
@@ -67,13 +74,19 @@ fun PantallaPrincipal(
     vm: FinanzasViewModel = viewModel(),
 ) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val mes by vm.mes.collectAsStateWithLifecycle()
     val lista by vm.transacciones.collectAsStateWithLifecycle()
     val tarjetas by vm.tarjetas.collectAsStateWithLifecycle()
+    val credito by vm.tarjetasConfig.collectAsStateWithLifecycle()
 
     var tieneAcceso by remember { mutableStateOf(true) }
+    var ubicacion by remember { mutableStateOf(true) }
+    var ubicacionSiempre by remember { mutableStateOf(true) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         tieneAcceso = ctx.packageName in NotificationManagerCompat.getEnabledListenerPackages(ctx)
+        ubicacion = com.misfinanzas.Ubicacion.hayPermiso(ctx)
+        ubicacionSiempre = com.misfinanzas.Ubicacion.hayPermisoSiempre(ctx)
     }
 
     var pestana by remember { mutableIntStateOf(0) }
@@ -94,6 +107,15 @@ fun PantallaPrincipal(
                     }
                 },
                 navigationIcon = botonMenu,
+                actions = {
+                    val ocultos = Ajustes.saldosOcultos
+                    IconButton(onClick = { cambiarOcultos(ctx, scope, !ocultos) }) {
+                        Icon(
+                            painterResource(if (ocultos) R.drawable.ic_visibility_off else R.drawable.ic_visibility),
+                            if (ocultos) "Mostrar cantidades" else "Ocultar cantidades",
+                        )
+                    }
+                },
             )
         },
         floatingActionButton = {
@@ -104,6 +126,7 @@ fun PantallaPrincipal(
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             if (!tieneAcceso) AvisoPermiso(abrirAjustesNotificaciones)
+            else if (!ubicacionSiempre && !Ajustes.sinAvisoUbicacion) AvisoUbicacion(ubicacionConcedida = ubicacion) { ubicacionSiempre = it }
 
             Total(lista)
 
@@ -125,6 +148,11 @@ fun PantallaPrincipal(
             onGuardar = { nueva -> vm.guardar(nueva, nueva.categoria != t.categoria); editando = null },
             onEliminar = { vm.eliminar(t); editando = null },
             onCerrar = { editando = null },
+            onPasarAMeses = { meses: Int, primerMes: java.time.YearMonth -> vm.pasarAMeses(t, meses, primerMes); editando = null }
+                .takeIf { t.id != 0L && t.tipo == Tipos.GASTO && t.fuente != Meses.FUENTE && credito.any { it.nombre == t.tarjeta } },
+            onQuitarMeses = { vm.quitarMeses(t); editando = null },
+            buscarDuplicados = (suspend { vm.posiblesDuplicados(t) }).takeIf { t.id != 0L && t.fuente != Meses.FUENTE },
+            onDuplicadoDe = { conservar -> vm.marcarDuplicado(t, conservar); editando = null },
         )
     }
 }
@@ -140,6 +168,47 @@ private fun AvisoPermiso(abrir: () -> Unit) {
             Text("Sin él no puedo registrar tus pagos de Google Wallet automáticamente.")
             Spacer(Modifier.height(8.dp))
             Button(onClick = abrir) { Text("Dar acceso") }
+        }
+    }
+}
+
+/**
+ * Pide la ubicación en dos pasos, como exige Android: primero "mientras se usa la app" y luego
+ * "todo el tiempo", que es la que necesita el lector de notificaciones con la app cerrada.
+ */
+@Composable
+private fun AvisoUbicacion(ubicacionConcedida: Boolean, onListo: (Boolean) -> Unit) {
+    val ctx = LocalContext.current
+    val segundoPaso = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        onListo(com.misfinanzas.Ubicacion.hayPermisoSiempre(ctx))
+    }
+    val primerPaso = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        if (com.misfinanzas.Ubicacion.hayPermiso(ctx) && android.os.Build.VERSION.SDK_INT >= 29) {
+            segundoPaso.launch(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+    }
+    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Column(Modifier.padding(16.dp)) {
+            Text("¿Dónde gastas?", fontWeight = FontWeight.Bold)
+            Text(
+                if (ubicacionConcedida)
+                    "Falta un paso: en la siguiente pantalla elige \"Permitir todo el tiempo\". Así se guarda el lugar aunque la app esté cerrada."
+                else
+                    "Guardo el lugar de cada compra en persona para que la veas en el mapa. Solo leo tu ubicación al momento de pagar.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row {
+                Button(onClick = {
+                    if (ubicacionConcedida && android.os.Build.VERSION.SDK_INT >= 29) {
+                        segundoPaso.launch(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    } else {
+                        primerPaso.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+                    }
+                }) { Text(if (ubicacionConcedida) "Permitir todo el tiempo" else "Activar") }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = { Ajustes.ocultarAvisoUbicacion(ctx) }) { Text("Ahora no") }
+            }
         }
     }
 }
@@ -231,9 +300,11 @@ private fun FilaTransaccion(t: Transaccion, onClick: () -> Unit) {
             Text(t.comercio, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
             Text(
                 // Lo cargado de estados de cuenta no trae hora, solo el día.
-                when (t.fuente) {
-                    "manual" -> "${t.tarjeta} · ${hora(t.fecha)} · manual"
-                    "estado" -> "${t.tarjeta} · estado de cuenta"
+                when {
+                    t.tipo == Tipos.MSI -> "${t.tarjeta} · a meses"
+                    t.fuente == Meses.FUENTE -> "${t.tarjeta} · mensualidad ${t.nota}"
+                    t.fuente == "manual" -> "${t.tarjeta} · ${hora(t.fecha)} · manual"
+                    t.fuente == "estado" -> "${t.tarjeta} · estado de cuenta"
                     else -> "${t.tarjeta} · ${hora(t.fecha)}"
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -245,7 +316,7 @@ private fun FilaTransaccion(t: Transaccion, onClick: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         when (t.tipo) {
             Tipos.INGRESO -> Text("+${dinero(t.monto)}", fontWeight = FontWeight.SemiBold, color = Ingreso)
-            Tipos.TRANSFERENCIA -> Text(dinero(t.monto), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Tipos.TRANSFERENCIA, Tipos.MSI -> Text(dinero(t.monto), color = MaterialTheme.colorScheme.onSurfaceVariant)
             else -> Text(dinero(t.monto), fontWeight = FontWeight.SemiBold)
         }
     }

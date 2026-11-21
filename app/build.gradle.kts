@@ -1,3 +1,10 @@
+import java.util.Properties
+
+// La llave de Google Maps vive en local.properties (MAPS_API_KEY=...), fuera del código.
+val mapsApiKey: String = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}.getProperty("MAPS_API_KEY", "")
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -15,6 +22,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
+        buildConfigField("boolean", "HAY_MAPA", (mapsApiKey.isNotBlank()).toString())
     }
 
     buildTypes {
@@ -33,6 +42,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -52,6 +62,7 @@ dependencies {
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("androidx.glance:glance-material3:1.1.1")
+    implementation("com.google.maps.android:maps-compose:6.2.1")
 
     val room = "2.6.1"
     implementation("androidx.room:room-runtime:$room")

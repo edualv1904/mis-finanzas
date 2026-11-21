@@ -1,5 +1,6 @@
 package com.misfinanzas
 
+import com.misfinanzas.data.Transaccion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -128,6 +129,44 @@ class ParsersTest {
         assertEquals("Rappicard", Gemelas.mejorTarjeta("Rappicard", "Rappicard"))
         assertEquals(Tipos.GASTO, Gemelas.mejorTipo(Tipos.TRANSFERENCIA, Tipos.GASTO))
         assertEquals(Tipos.INGRESO, Gemelas.mejorTipo(Tipos.INGRESO, Tipos.INGRESO))
+    }
+
+    /** Wallet y el banco casi nunca escriben igual el nombre del comercio. */
+    @Test
+    fun mismoComercio() {
+        listOf(
+            "OXXO CENTRO MTZ" to "Oxxo",
+            "PASTELERIA LUNA" to "REST PASTELERIALUNA",
+            "H-E-B" to "HEB",
+            "7 ELEVEN T1234" to "7 Eleven",
+            "CLINICA EJEMPLO DE" to "CLINICA EJEMPLO DE MEXICO",
+            "CARLS JR CENTRO I" to "Carls Jr",
+            "WUZIPAY*TACOS LUNA" to "WUZIPAY TACOS LUNA",
+            "HEB CENTRO" to "H-E-B",
+        ).forEach { (a, b) -> assertTrue("$a ≈ $b", Gemelas.mismoComercio(a, b)) }
+        listOf(
+            "OXXO CENTRO" to "7 Eleven",
+            "REST CAFE SOL" to "REST PASTELERIALUNA",
+            "CLIP MX*REST LUNA" to "CLIP MX*GAS SERVICIO T",
+            "CAFFENIO" to "Starbucks",
+        ).forEach { (a, b) -> assertFalse("$a ≠ $b", Gemelas.mismoComercio(a, b)) }
+    }
+
+    @Test
+    fun gemelasConRetraso() {
+        val hora = 3_600_000L
+        val bbva = Transaccion(
+            monto = 2000.00, comercio = "CLINICA EJEMPLO DE", tarjeta = Tarjetas.BBVA_CREDITO,
+            fecha = 0L, categoria = "Otros", fuente = "bbva",
+        )
+        // Wallet avisó 12 h (y hasta un día) después: es la misma compra.
+        assertTrue(Gemelas.sonGemelas(bbva, "BBVA TDC", "CLINICA EJEMPLO DE MEXICO", 12 * hora))
+        assertTrue(Gemelas.sonGemelas(bbva, "BBVA TDC", "Clinica Ejemplo", 30 * hora))
+        // Mismo monto, otro comercio, horas después: son dos compras.
+        assertFalse(Gemelas.sonGemelas(bbva, "BBVA TDC", "Liverpool", 3 * hora))
+        // Casi al mismo tiempo basta con monto y banco (Wallet a veces pone otro nombre).
+        assertTrue(Gemelas.sonGemelas(bbva, "BBVA TDC", "Liverpool", 5 * 60_000L))
+        assertTrue(Gemelas.VENTANA_MS < 49 * hora)
     }
 
     @Test

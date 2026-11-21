@@ -44,41 +44,44 @@ import com.misfinanzas.ui.Iconos
 import com.misfinanzas.ui.Tinta
 import com.misfinanzas.ui.TintaSuave
 import com.misfinanzas.ui.dinero
+import com.misfinanzas.Ajustes
+import java.time.DayOfWeek
 import java.time.LocalDate
-import java.time.YearMonth
+import java.time.temporal.TemporalAdjusters
 import java.time.ZoneId
 
 class FinanzasWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
+        Ajustes.cargar(context)
         val dao = FinanzasDb.get(context).dao()
         val zona = ZoneId.systemDefault()
         val hoy = LocalDate.now()
-        val mes = YearMonth.from(hoy)
+        val lunes = hoy.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         fun ms(d: LocalDate) = d.atStartOfDay(zona).toInstant().toEpochMilli()
 
-        val rangoMes = ms(mes.atDay(1)) to ms(mes.plusMonths(1).atDay(1))
+        val rangoSemana = ms(lunes) to ms(lunes.plusWeeks(1))
         val rangoHoy = ms(hoy) to ms(hoy.plusDays(1))
-        val mesInicial = dao.sumaGastos(rangoMes.first, rangoMes.second)
+        val semanaInicial = dao.sumaGastos(rangoSemana.first, rangoSemana.second)
         val hoyInicial = dao.sumaGastos(rangoHoy.first, rangoHoy.second)
 
         // provideGlance solo corre al "despertar" el widget; las actualizaciones posteriores solo
         // redibujan. Por eso los totales se escuchan de la base de datos en vez de leerse una vez.
         provideContent {
-            val totalMes by remember { dao.observarSumaGastos(rangoMes.first, rangoMes.second) }.collectAsState(mesInicial)
+            val totalSemana by remember { dao.observarSumaGastos(rangoSemana.first, rangoSemana.second) }.collectAsState(semanaInicial)
             val totalHoy by remember { dao.observarSumaGastos(rangoHoy.first, rangoHoy.second) }.collectAsState(hoyInicial)
-            Contenido(totalMes, totalHoy)
+            Contenido(totalSemana, totalHoy)
         }
     }
 
     @Composable
-    private fun Contenido(totalMes: Double, totalHoy: Double) {
+    private fun Contenido(totalSemana: Double, totalHoy: Double) {
         val tinta = ColorProvider(Tinta)
         val suave = ColorProvider(TintaSuave)
         Column(GlanceModifier.fillMaxSize().background(Color.White).cornerRadius(20.dp).padding(14.dp)) {
             Column(GlanceModifier.fillMaxWidth().clickable(actionStartActivity<MainActivity>())) {
-                Text("Gastado este mes", style = TextStyle(color = suave, fontSize = 12.sp))
-                Text(dinero(totalMes), style = TextStyle(color = tinta, fontSize = 24.sp, fontWeight = FontWeight.Bold))
+                Text("Gastado esta semana", style = TextStyle(color = suave, fontSize = 12.sp))
+                Text(dinero(totalSemana), style = TextStyle(color = tinta, fontSize = 24.sp, fontWeight = FontWeight.Bold))
                 Text("Hoy ${dinero(totalHoy)}", style = TextStyle(color = suave, fontSize = 12.sp))
             }
             Spacer(GlanceModifier.height(10.dp))

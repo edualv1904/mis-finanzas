@@ -47,6 +47,11 @@ data class Transaccion(
     val claveVinculada: String? = null,
     /** Ver [com.misfinanzas.Tipos]: solo los gastos suman en "Gastado este mes". */
     val tipo: String = Tipos.GASTO,
+    /** Dónde estabas al pagar (solo compras en persona). Null = sin ubicación. */
+    val lat: Double? = null,
+    val lon: Double? = null,
+    /** Dirección legible de [lat]/[lon]; se llena cuando hay internet. */
+    val lugar: String? = null,
 )
 
 /** Recuerda la categoría que elegiste para cada comercio. */
@@ -85,6 +90,13 @@ data class TarjetaConfig(
     val color: Int? = null,
 )
 
+/**
+ * Claves de notificaciones que marcaste como duplicado: si la app de origen vuelve a mandar la misma
+ * notificación, no se registra otra vez.
+ */
+@Entity(tableName = "claves_descartadas")
+data class ClaveDescartada(@PrimaryKey val clave: String)
+
 /** Ideas que apuntas fuera de casa para platicarlas después. */
 @Entity(tableName = "notas")
 data class Nota(
@@ -105,13 +117,54 @@ interface TransaccionDao {
     @Query("SELECT COALESCE(SUM(monto), 0) FROM transacciones WHERE tipo = 'gasto' AND fecha >= :desde AND fecha < :hasta")
     fun observarSumaGastos(desde: Long, hasta: Long): Flow<Double>
 
-    @Query("SELECT EXISTS(SELECT 1 FROM transacciones WHERE claveUnica = :clave OR claveVinculada = :clave)")
+    @Query(
+        """SELECT EXISTS(SELECT 1 FROM transacciones WHERE claveUnica = :clave OR claveVinculada = :clave)
+           OR EXISTS(SELECT 1 FROM claves_descartadas WHERE clave = :clave)"""
+    )
     suspend fun claveVista(clave: String): Boolean
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun descartarClave(c: ClaveDescartada)
+
+    @Query("SELECT * FROM transacciones WHERE id = :id")
+    suspend fun porId(id: Long): Transaccion?
+
+    @Query("SELECT * FROM transacciones WHERE claveUnica = :clave")
+    suspend fun porClave(clave: String): Transaccion?
+
+    @Query("UPDATE transacciones SET lat = :lat, lon = :lon, lugar = :lugar WHERE id = :id")
+    suspend fun ponerUbicacion(id: Long, lat: Double?, lon: Double?, lugar: String?)
+
+    /** Movimientos con ubicación a los que les falta la dirección (no había internet al guardarlos). */
+    @Query("SELECT * FROM transacciones WHERE lat IS NOT NULL AND lugar IS NULL ORDER BY fecha DESC LIMIT 50")
+    suspend fun sinDireccion(): List<Transaccion>
+
+    @Query("SELECT * FROM transacciones WHERE lat IS NOT NULL AND fecha >= :desde AND fecha < :hasta ORDER BY fecha DESC")
+    fun observarConUbicacion(desde: Long, hasta: Long): Flow<List<Transaccion>>
+
+    /** Otros movimientos del mismo monto cerca de esa fecha, el más cercano primero. */
+    @Query(
+        """SELECT * FROM transacciones
+           WHERE id != :id AND ABS(monto - :monto) < 0.015 AND fecha BETWEEN :desde AND :hasta
+           ORDER BY ABS(fecha - :fecha)"""
+    )
+    suspend fun posiblesDuplicados(id: Long, monto: Double, fecha: Long, desde: Long, hasta: Long): List<Transaccion>
+
+    /** Mensualidades de una compra a meses (claveUnica "msi|<id>|k"). */
+    @Query("SELECT * FROM transacciones WHERE claveUnica LIKE :prefijo || '%' ORDER BY fecha")
+    suspend fun mensualidadesDe(prefijo: String): List<Transaccion>
+
+    @Query("DELETE FROM transacciones WHERE claveUnica LIKE :prefijo || '%'")
+    suspend fun borrarMensualidades(prefijo: String)
+
+    /** Compras a meses y sus mensualidades, de cualquier fecha. */
+    @Query("SELECT * FROM transacciones WHERE tipo = 'msi' OR claveUnica LIKE 'msi|%' ORDER BY fecha")
+    fun observarMeses(): Flow<List<Transaccion>>
 
     /** Pagos de otra fuente automática, mismo monto y hora cercana, que aún no tienen pareja. */
     @Query(
         """SELECT * FROM transacciones
-           WHERE fuente != :fuente AND fuente != 'manual' AND claveVinculada IS NULL
+           WHERE fuente != :fuente AND fuente NOT IN ('manual', 'msi') AND claveVinculada IS NULL
              AND ABS(monto - :monto) < 0.005 AND fecha BETWEEN :desde AND :hasta
            ORDER BY ABS(fecha - (:desde + :hasta) / 2)"""
     )
@@ -192,7 +245,7 @@ interface TransaccionDao {
     fun observarTarjetas(): Flow<List<String>>
 }
 
-@Database(entities = [Transaccion::class, CategoriaComercio::class, NotificacionCruda::class, Nota::class, TarjetaConfig::class], version = 9, exportSchema = false)
+@Database(entities = [Transaccion::class, CategoriaComercio::class, NotificacionCruda::class, Nota::class, TarjetaConfig::class, ClaveDescartada::class], version = 11, exportSchema = false)
 abstract class FinanzasDb : RoomDatabase() {
     abstract fun dao(): TransaccionDao
 
@@ -203,7 +256,7 @@ abstract class FinanzasDb : RoomDatabase() {
             instancia ?: synchronized(this) {
                 instancia ?: Room.databaseBuilder(
                     context.applicationContext, FinanzasDb::class.java, "finanzas.db"
-                ).addMigrations(MIGRACION_1_2, MIGRACION_2_3, MIGRACION_3_4, MIGRACION_4_5, MIGRACION_5_6, MIGRACION_6_7, MIGRACION_7_8, MIGRACION_8_9).build().also { instancia = it }
+                ).addMigrations(MIGRACION_1_2, MIGRACION_2_3, MIGRACION_3_4, MIGRACION_4_5, MIGRACION_5_6, MIGRACION_6_7, MIGRACION_7_8, MIGRACION_8_9, MIGRACION_9_10, MIGRACION_10_11).build().also { instancia = it }
             }
     }
 }
@@ -322,5 +375,20 @@ private val MIGRACION_8_9 = object : Migration(8, 9) {
         ).forEach { (antes, ahora) ->
             db.execSQL("UPDATE tarjetas SET color = ? WHERE color = ?", arrayOf<Any>(ahora.toInt(), antes.toInt()))
         }
+    }
+}
+
+/** Claves de notificaciones marcadas como duplicado (para que no regresen). */
+private val MIGRACION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS claves_descartadas (clave TEXT NOT NULL PRIMARY KEY)")
+    }
+}
+
+private val MIGRACION_10_11 = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE transacciones ADD COLUMN lat REAL")
+        db.execSQL("ALTER TABLE transacciones ADD COLUMN lon REAL")
+        db.execSQL("ALTER TABLE transacciones ADD COLUMN lugar TEXT")
     }
 }

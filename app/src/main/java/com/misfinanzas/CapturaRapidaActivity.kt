@@ -30,7 +30,7 @@ class CapturaRapidaActivity : ComponentActivity() {
                     onGuardar = { t ->
                         lifecycleScope.launch {
                             Registro.guardar(applicationContext, t, recordarCategoria = t.categoria != "Otros")
-                            Toast.makeText(applicationContext, "Guardado: ${dinero(t.monto)} en ${t.comercio}", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(applicationContext, "Guardado: ${dinero(t.monto, mostrar = true)} en ${t.comercio}", Toast.LENGTH_SHORT).show()
                             finish()
                         }
                     },

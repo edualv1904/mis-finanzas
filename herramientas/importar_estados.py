@@ -61,8 +61,12 @@ def mediodia(dia: date) -> int:
 def main(csv_path: Path, db_path: Path, aplicar: bool, exportar: str | None = None):
     db = sqlite3.connect(db_path)
     elegidas = dict(db.execute("SELECT comercio, categoria FROM categoria_comercio"))
-    existentes = list(db.execute("SELECT tarjeta, monto, fecha, fuente FROM transacciones"))
+    # Las mensualidades de compras a meses (fuente 'msi') no son capturas: no deben tapar una compra real.
+    existentes = list(db.execute("SELECT tarjeta, monto, fecha, fuente FROM transacciones WHERE fuente != 'msi'"))
     claves = {r[0] for r in db.execute("SELECT claveUnica FROM transacciones WHERE claveUnica IS NOT NULL")}
+    # Lo que marcaste como duplicado en la app no se vuelve a cargar.
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'claves_descartadas'").fetchone():
+        claves |= {r[0] for r in db.execute("SELECT clave FROM claves_descartadas")}
 
     nuevos, repetidos, ya_en_app, ocurrencias = [], 0, [], Counter()
     for r in csv.DictReader(open(csv_path, encoding="utf-8")):

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.YearMonth
@@ -32,6 +33,15 @@ class FinanzasViewModel(app: Application) : AndroidViewModel(app) {
             val desde = m.atDay(1).atStartOfDay(zona).toInstant().toEpochMilli()
             val hasta = m.plusMonths(1).atDay(1).atStartOfDay(zona).toInstant().toEpochMilli()
             dao.observarRango(desde, hasta)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Movimientos del mes que tienen ubicación, para el mapa. */
+    val conUbicacion: StateFlow<List<Transaccion>> = _mes
+        .flatMapLatest { m ->
+            val desde = m.atDay(1).atStartOfDay(zona).toInstant().toEpochMilli()
+            val hasta = m.plusMonths(1).atDay(1).atStartOfDay(zona).toInstant().toEpochMilli()
+            dao.observarConUbicacion(desde, hasta)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -80,4 +90,19 @@ class FinanzasViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun eliminar(t: Transaccion) = viewModelScope.launch { Registro.eliminar(getApplication(), t) }
+
+    /** Compras a meses (con sus mensualidades), de cualquier fecha. */
+    val meses: StateFlow<List<Meses.Plan>> = dao.observarMeses()
+        .map(Meses::agrupar)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun pasarAMeses(t: Transaccion, meses: Int, primerMes: YearMonth) =
+        viewModelScope.launch { Registro.pasarAMeses(getApplication(), t, meses, primerMes) }
+
+    fun quitarMeses(t: Transaccion) = viewModelScope.launch { Registro.quitarMeses(getApplication(), t) }
+
+    suspend fun posiblesDuplicados(t: Transaccion) = Registro.posiblesDuplicados(getApplication(), t)
+
+    fun marcarDuplicado(quitar: Transaccion, conservar: Transaccion) =
+        viewModelScope.launch { Registro.marcarDuplicado(getApplication(), quitar, conservar) }
 }

@@ -63,6 +63,7 @@ import com.misfinanzas.R
 import com.misfinanzas.Ciclo
 import com.misfinanzas.Ciclos
 import com.misfinanzas.FinanzasViewModel
+import com.misfinanzas.Meses
 import com.misfinanzas.Tipos
 import com.misfinanzas.data.TarjetaConfig
 import com.misfinanzas.data.Transaccion
@@ -90,6 +91,7 @@ fun PantallaTarjetas(vm: FinanzasViewModel, botonMenu: @Composable () -> Unit) {
     val tarjetas by vm.tarjetasConfig.collectAsStateWithLifecycle()
     val movimientos by vm.recientes.collectAsStateWithLifecycle()
     val primeraFecha by vm.primeraFecha.collectAsStateWithLifecycle()
+    val planes by vm.meses.collectAsStateWithLifecycle()
     val primerDia = primeraFecha?.let(::diaDe)
     val hoy = LocalDate.now()
     var editando by remember { mutableStateOf<TarjetaConfig?>(null) }
@@ -100,7 +102,7 @@ fun PantallaTarjetas(vm: FinanzasViewModel, botonMenu: @Composable () -> Unit) {
     PedirPermisoNotificaciones()
 
     if (enDetalle != null) {
-        DetalleTarjeta(enDetalle, movimientos, primerDia, hoy, onEditar = { editando = enDetalle }, onVolver = { detalle = null })
+        DetalleTarjeta(enDetalle, movimientos, planes.filter { it.tarjeta == enDetalle.nombre }, primerDia, hoy, onEditar = { editando = enDetalle }, onVolver = { detalle = null })
     } else Scaffold(
         topBar = { TopAppBar(title = { Text("Tarjetas") }, navigationIcon = botonMenu) },
         floatingActionButton = {
@@ -260,6 +262,7 @@ private fun periodosDe(t: TarjetaConfig, hoy: LocalDate, primerDia: LocalDate?):
 private fun DetalleTarjeta(
     t: TarjetaConfig,
     movimientos: List<Transaccion>,
+    planes: List<Meses.Plan>,
     primerDia: LocalDate?,
     hoy: LocalDate,
     onEditar: () -> Unit,
@@ -282,6 +285,7 @@ private fun DetalleTarjeta(
         },
     ) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+            if (planes.isNotEmpty()) item(key = "meses") { SeccionMeses(planes, hoy) }
             periodos.forEachIndexed { i, dias ->
                 val compras = gastos.filter { diaDe(it.fecha) in dias }
                 item(key = "periodo-$i") {
@@ -392,3 +396,48 @@ private fun PedirPermisoNotificaciones() {
         if (ContextCompat.checkSelfPermission(ctx, permiso) != PackageManager.PERMISSION_GRANTED) launcher.launch(permiso)
     }
 }
+
+/** Compras a meses de la tarjeta: cuánto falta y cuándo cae cada mensualidad. */
+@Composable
+private fun SeccionMeses(planes: List<Meses.Plan>, hoy: LocalDate) {
+    val apagado = MaterialTheme.colorScheme.onSurfaceVariant
+    val porPagar = planes.sumOf { p -> p.mensualidades.filter { diaDe(it.fecha) >= hoy }.sumOf { it.monto } }
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Meses sin intereses", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Text(dinero(porPagar), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+        Text("Por pagar de ${planes.size} ${if (planes.size == 1) "compra" else "compras"}", style = MaterialTheme.typography.bodySmall, color = apagado)
+        planes.forEach { p ->
+            Card(
+                Modifier.fillMaxWidth().padding(top = 12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(p.comercio, Modifier.weight(1f), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(dinero(p.total), fontWeight = FontWeight.SemiBold)
+                    }
+                    Text(
+                        (p.compra?.let { "Compra del ${corta(diaDe(it.fecha))} · " } ?: "") + "${p.mensualidades.size} meses",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = apagado,
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                    p.mensualidades.forEach { m ->
+                        val pasada = diaDe(m.fecha) < hoy
+                        val color = if (pasada) apagado else MaterialTheme.colorScheme.onSurface
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Text(m.nota, Modifier.weight(1f), color = color)
+                            Text(diaDe(m.fecha).format(fmtMesCorto).replace(".", ""), Modifier.weight(1.4f), color = color)
+                            Text(dinero(m.monto), color = color)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private val fmtMesCorto = DateTimeFormatter.ofPattern("d MMM yyyy", Locale("es", "MX"))

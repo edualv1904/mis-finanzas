@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.room.withTransaction
 import androidx.glance.appwidget.updateAll
 import com.misfinanzas.data.CategoriaComercio
+import com.misfinanzas.data.ClaveDescartada
 import com.misfinanzas.data.FinanzasDb
 import com.misfinanzas.data.Transaccion
 import com.misfinanzas.widget.FinanzasWidget
@@ -12,6 +13,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.io.File
+import java.time.YearMonth
 
 /** Llaves que evitan registrar dos veces la misma notificación. */
 object Claves {
@@ -48,7 +50,7 @@ object Registro {
                 desde = fecha - Gemelas.VENTANA_MS,
                 hasta = fecha + Gemelas.VENTANA_MS,
                 fuente = fuente,
-            ).firstOrNull { Gemelas.mismoBanco(it.tarjeta, pago.tarjeta) }
+            ).firstOrNull { Gemelas.sonGemelas(it, pago.tarjeta, pago.comercio, fecha) }
 
             if (gemela != null) {
                 dao.actualizar(
@@ -126,10 +128,25 @@ object Registro {
                 )
                 if (id != -1L) cargados++
             }
-            val recategorizar = datos.getJSONArray("recategorizar")
-            for (i in 0 until recategorizar.length()) {
-                val r = recategorizar.getJSONObject(i)
+            val recategorizar = datos.optJSONArray("recategorizar")
+            for (i in 0 until (recategorizar?.length() ?: 0)) {
+                val r = recategorizar!!.getJSONObject(i)
                 dao.recategorizar(r.getLong("id"), r.getString("categoria"))
+            }
+            // Arreglos preparados en la PC: {"conservar": id, "quitar": id}
+            val duplicados = datos.optJSONArray("duplicados")
+            for (i in 0 until (duplicados?.length() ?: 0)) {
+                val d = duplicados!!.getJSONObject(i)
+                val quitar = dao.porId(d.getLong("quitar")) ?: continue
+                val conservar = dao.porId(d.getLong("conservar")) ?: continue
+                marcarDuplicadoSinRefrescar(ctx, quitar, conservar)
+            }
+            // {"id": id, "meses": 3, "primerMes": "2027-03"}
+            val aMeses = datos.optJSONArray("aMeses")
+            for (i in 0 until (aMeses?.length() ?: 0)) {
+                val m = aMeses!!.getJSONObject(i)
+                val compra = dao.porId(m.getLong("id")) ?: continue
+                pasarAMesesSinRefrescar(ctx, compra, m.getInt("meses"), YearMonth.parse(m.getString("primerMes")))
             }
         }
         archivo.delete()
@@ -149,7 +166,63 @@ object Registro {
     }
 
     suspend fun eliminar(ctx: Context, t: Transaccion) {
-        FinanzasDb.get(ctx).dao().eliminar(t)
+        val db = FinanzasDb.get(ctx)
+        db.withTransaction {
+            // Si borras una compra a meses, sus mensualidades se van con ella.
+            if (t.tipo == Tipos.MSI) db.dao().borrarMensualidades(Meses.prefijo(t.id))
+            db.dao().eliminar(t)
+        }
+        refrescarWidgets(ctx)
+    }
+
+    /**
+     * [quitar] es el mismo movimiento que [conservar]: se borra y sus claves se recuerdan para que la
+     * notificación (o el estado de cuenta) no lo vuelva a meter.
+     */
+    suspend fun marcarDuplicado(ctx: Context, quitar: Transaccion, conservar: Transaccion) {
+        FinanzasDb.get(ctx).withTransaction { marcarDuplicadoSinRefrescar(ctx, quitar, conservar) }
+        refrescarWidgets(ctx)
+    }
+
+    private suspend fun marcarDuplicadoSinRefrescar(ctx: Context, quitar: Transaccion, conservar: Transaccion) {
+        val dao = FinanzasDb.get(ctx).dao()
+        listOfNotNull(quitar.claveUnica, quitar.claveVinculada).forEach { dao.descartarClave(ClaveDescartada(it)) }
+        if (conservar.categoria == "Otros" && quitar.categoria != "Otros") {
+            dao.actualizar(conservar.copy(categoria = quitar.categoria))
+        }
+        if (quitar.tipo == Tipos.MSI) dao.borrarMensualidades(Meses.prefijo(quitar.id))
+        dao.eliminar(quitar)
+    }
+
+    suspend fun posiblesDuplicados(ctx: Context, t: Transaccion): List<Transaccion> {
+        val tresDias = 3 * 86_400_000L
+        return FinanzasDb.get(ctx).dao()
+            .posiblesDuplicados(t.id, t.monto, t.fecha, t.fecha - tresDias, t.fecha + tresDias)
+            .filter { it.fuente != Meses.FUENTE }
+    }
+
+    /** Divide [compra] en [meses] mensualidades a partir de [primerMes]. Si ya estaba a meses, las rehace. */
+    suspend fun pasarAMeses(ctx: Context, compra: Transaccion, meses: Int, primerMes: YearMonth) {
+        FinanzasDb.get(ctx).withTransaction { pasarAMesesSinRefrescar(ctx, compra, meses, primerMes) }
+        refrescarWidgets(ctx)
+    }
+
+    private suspend fun pasarAMesesSinRefrescar(ctx: Context, compra: Transaccion, meses: Int, primerMes: YearMonth) {
+        require(meses >= 2 && compra.id != 0L)
+        val dao = FinanzasDb.get(ctx).dao()
+        val diaLimite = dao.tarjetasConfig().firstOrNull { it.nombre == compra.tarjeta }?.diaLimite ?: 1
+        dao.borrarMensualidades(Meses.prefijo(compra.id))
+        dao.actualizar(compra.copy(tipo = Tipos.MSI))
+        Meses.mensualidades(compra, meses, primerMes, diaLimite).forEach { dao.insertar(it) }
+    }
+
+    /** Regresa la compra a un gasto normal y borra sus mensualidades. */
+    suspend fun quitarMeses(ctx: Context, compra: Transaccion) {
+        val db = FinanzasDb.get(ctx)
+        db.withTransaction {
+            db.dao().borrarMensualidades(Meses.prefijo(compra.id))
+            db.dao().actualizar(compra.copy(tipo = Tipos.GASTO))
+        }
         refrescarWidgets(ctx)
     }
 

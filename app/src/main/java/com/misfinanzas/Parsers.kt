@@ -1,11 +1,17 @@
 package com.misfinanzas
 
+import com.misfinanzas.data.Transaccion
+import java.text.Normalizer
+import kotlin.math.abs
+
 /** Tipos de movimiento. Solo los gastos cuentan en "Gastado este mes". */
 object Tipos {
     const val GASTO = "gasto"
     const val INGRESO = "ingreso"
     /** Dinero que se mueve entre tus cuentas o pagos de tarjeta: no es gasto nuevo. */
     const val TRANSFERENCIA = "transferencia"
+    /** Compra pasada a meses: no suma; lo que suma son sus mensualidades (ver Meses). */
+    const val MSI = "msi"
 }
 
 /** Movimiento extraído de la notificación de una app (Wallet o banco). */
@@ -269,7 +275,39 @@ object BanamexParser : FuenteNotificacion {
 
 /** Reglas para detectar que dos notificaciones (p. ej. Wallet + banco) son el mismo movimiento. */
 object Gemelas {
-    const val VENTANA_MS = 10 * 60 * 1000L
+    /** Lo normal es que lleguen casi juntas; Wallet a veces avisa horas después (hasta un día). */
+    const val VENTANA_MS = 48 * 60 * 60 * 1000L
+
+    /** Dentro de este lapso basta con monto y banco; más allá, el comercio también debe parecerse. */
+    const val CERCA_MS = 10 * 60 * 1000L
+
+    fun sonGemelas(a: Transaccion, tarjeta: String, comercio: String, fecha: Long): Boolean =
+        mismoBanco(a.tarjeta, tarjeta) &&
+            (abs(a.fecha - fecha) <= CERCA_MS || mismoComercio(a.comercio, comercio))
+
+    /** Prefijos de procesadores de pago que no dicen nada del comercio. */
+    private val genericas = setOf(
+        "rest", "clip", "wuzipay", "oplinea", "yolopag", "paypal", "mercadopago", "merpago", "stripe",
+        "conekta", "openpay", "netpay", "billpocket", "evopay", "srpago", "getnet",
+    )
+
+    private fun normalizar(s: String) =
+        Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
+
+    /** "PASTELERIA LUNA" ≈ "REST PASTELERIALUNA", "H-E-B" ≈ "HEB", "7 ELEVEN T1234" ≈ "7 Eleven". */
+    fun mismoComercio(a: String, b: String): Boolean {
+        val na = normalizar(a)
+        val nb = normalizar(b)
+        val juntoA = na.filter { it.isLetter() }
+        val juntoB = nb.filter { it.isLetter() }
+        if (juntoA.isEmpty() || juntoB.isEmpty()) return false
+        if (juntoA == juntoB) return true
+        // Nombres cortos o con guiones: "H-E-B" → "heb" es el inicio de "HEB CENTRO".
+        val corto = minOf(juntoA, juntoB, compareBy { it.length })
+        if (corto.length >= 3 && corto !in genericas && (juntoA.startsWith(corto) && juntoB.startsWith(corto))) return true
+        fun palabras(s: String) = s.split(Regex("[^a-z]+")).filter { it.length >= 4 && it !in genericas }
+        return palabras(na).any { it in juntoB } || palabras(nb).any { it in juntoA }
+    }
 
     /** Si ambos bancos se conocen deben coincidir; si alguno no se sabe, se acepta. */
     fun mismoBanco(tarjetaA: String, tarjetaB: String): Boolean {

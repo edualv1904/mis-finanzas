@@ -1,5 +1,6 @@
 package com.misfinanzas.ui
 
+import com.misfinanzas.Ajustes
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -14,7 +15,11 @@ private val fmtDia = DateTimeFormatter.ofPattern("EEEE d 'de' MMMM", mx)
 private val fmtHora = DateTimeFormatter.ofPattern("HH:mm", mx)
 private val fmtMes = DateTimeFormatter.ofPattern("MMMM yyyy", mx)
 
-fun dinero(monto: Double): String = moneda.format(monto)
+/** Cantidad en pesos; con "ocultar cantidades" activo sale como "$ ••••" (salvo que se pida [mostrar]). */
+fun dinero(monto: Double, mostrar: Boolean = !Ajustes.saldosOcultos): String =
+    if (mostrar) moneda.format(monto) else OCULTO
+
+const val OCULTO = "$ ••••"
 
 fun diaDe(millis: Long): LocalDate = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
 

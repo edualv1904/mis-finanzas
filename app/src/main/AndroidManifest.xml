@@ -4,6 +4,17 @@
     <!-- Recordatorios de fecha límite de pago de las tarjetas -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Pedir huella, rostro o PIN al abrir la app -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- Guardar dónde fue cada compra en persona (una lectura por pago, no se sigue tu ubicación) -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- El pago llega con la app cerrada: sin esto Android no da la ubicación al lector de notificaciones -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Dibujar el mapa y escribir la dirección -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Para poder mostrar el icono de las apps de tus bancos como logo de cada tarjeta -->
     <queries>
         <package android:name="com.bancomer.mbanking" />
@@ -19,6 +30,10 @@
         android:label="@string/app_name"
         android:icon="@android:drawable/ic_menu_agenda"
         android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${MAPS_API_KEY}" />
 
         <activity
             android:name=".MainActivity"

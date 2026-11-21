@@ -1,7 +1,7 @@
 # Mis Finanzas
 
 App Android personal que registra gastos leyendo las notificaciones de Google Wallet y de los bancos.
-Kotlin + Compose + Room, sin servidor ni internet. No va a la Play Store: se instala por ADB.
+Kotlin + Compose + Room, sin servidor (internet solo para el mapa). No va a la Play Store: se instala por ADB.
 Responder en español. Toda la documentación del proyecto está en README.md.
 
 ## Reglas de seguridad de datos
@@ -12,8 +12,9 @@ Responder en español. Toda la documentación del proyecto está en README.md.
    Python sobre la copia.
 3. No hacer `force-stop` mientras el usuario usa la app.
 4. No subir datos a ningún servicio ni cargar movimientos sin que el usuario lo apruebe.
-5. Nunca poner datos reales (comercios, montos, dígitos de tarjeta) en el código ni en las pruebas:
-   el repositorio es público.
+5. Nunca poner datos reales (comercios, montos, dígitos de tarjeta, direcciones, coordenadas) en el código
+   ni en las pruebas: el repositorio es público.
+6. La llave de Google Maps vive solo en `local.properties` (`MAPS_API_KEY`), nunca en el código.
 
 ## Decisiones de diseño
 

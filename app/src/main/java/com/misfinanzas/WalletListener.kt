@@ -48,6 +48,7 @@ class WalletListener : NotificationListenerService() {
         scope.launch {
             val resultado = Registro.registrarPago(applicationContext, pago, fuente.id, fecha, clave)
             Log.i(TAG, "$resultado: $pago")
+            if (resultado == Registro.Resultado.NUEVO) Ubicacion.anotar(applicationContext, clave, fecha)
         }
     }
 

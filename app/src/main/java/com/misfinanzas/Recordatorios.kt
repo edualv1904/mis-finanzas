@@ -43,7 +43,7 @@ class RecordatorioPagoWorker(ctx: Context, params: WorkerParameters) : Coroutine
                 ms(ciclo.periodoCerrado.endInclusive.plusDays(1)),
             )
             val cuando = if (dias == 0L) "hoy" else "en $dias días (${ciclo.limitePago.dayOfMonth})"
-            notificar(t.nombre.hashCode(), "Paga tu ${t.nombre}", "Vence $cuando · registrado ~${dinero(monto)}")
+            notificar(t.nombre.hashCode(), "Paga tu ${t.nombre}", "Vence $cuando · registrado ~${dinero(monto, mostrar = true)}")
         }
         return Result.success()
     }
