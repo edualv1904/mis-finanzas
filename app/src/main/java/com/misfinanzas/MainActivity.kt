@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Ajustes.cargar(applicationContext)
+        Respaldo.cargar(applicationContext)
         val barras = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
         enableEdgeToEdge(statusBarStyle = barras, navigationBarStyle = barras)
         // Girar la pantalla recrea la actividad: no debe volver a pedir la huella.
@@ -42,8 +43,10 @@ class MainActivity : ComponentActivity() {
             Registro.importarArchivo(applicationContext)
             Registro.importarCrudasEtiquetadas(applicationContext)
             Ubicacion.completarDirecciones(applicationContext)
+            Registro.limpiarIgnoradas(applicationContext)
         }
         RecordatorioPagoWorker.programar(applicationContext)
+        Respaldo.programar(applicationContext)
         setContent {
             Tema {
                 if (bloqueada) {

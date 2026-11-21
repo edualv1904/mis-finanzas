@@ -21,6 +21,9 @@ No está en la Play Store; se instala con ADB.
 - Mapa de gastos: cada compra en persona guarda dónde estabas al pagar (una sola lectura de ubicación,
   no te sigue). Las compras en línea y suscripciones no se ubican. También puedes poner el lugar a mano.
 - Widget con lo gastado esta semana y hoy, y captura rápida de gastos a mano.
+- Respaldo semanal a tu Google Drive: cada sábado, solo en el WiFi de casa, sube una copia de la base a la
+  carpeta "Respaldos Mis Finanzas" y guarda las últimas 8 semanas. La app solo ve los archivos que ella crea.
+- Las notificaciones que marcas "Ignorar" se borran solas a los 30 días.
 - Scripts en Python para cargar los movimientos de tus estados de cuenta en PDF (lo que se pagó sin
   notificación).
 
@@ -37,6 +40,7 @@ app/src/main/java/com/misfinanzas/
   Meses.kt            Compras a meses: reparto de mensualidades
   Ubicacion.kt        Ubicación de cada compra en persona + dirección escrita
   Ajustes.kt          Preferencias (huella, ocultar cantidades)
+  Respaldo.kt         Respaldo semanal a Google Drive
   data/Db.kt          Base de datos (Room)
   ui/                 Pantallas
   widget/             Widget + ventana de captura rápida
@@ -80,6 +84,18 @@ Sin llave la app funciona igual, solo no aparecen la pantalla "Mapa" ni "Elegir 
    ```
 5. Vuelve a compilar.
 
+### Respaldo en Drive (opcional)
+
+En el mismo proyecto de Google Cloud:
+
+1. Habilita **Google Drive API**.
+2. **Google Auth Platform → Comenzar**: tipo *Externo*, tu correo de contacto. En *Público* agrega tu cuenta
+   como usuario de prueba (o publica la app para que el permiso no caduque a los 7 días).
+3. **Clientes → Crear cliente → Android** con el paquete `com.misfinanzas` y el SHA-1 de tu llave de firma.
+4. En la app: menú → **Respaldo en Drive** → *Usar el WiFi actual* (estando en casa) → *Conectar Drive*.
+
+No hace falta copiar ningún ID a la app: Google la reconoce por el paquete y la huella.
+
 ## Adaptarla a ti
 
 - **Tus tarjetas**: dalas de alta en la pantalla Tarjetas con su día de corte y día límite de pago.
@@ -117,6 +133,13 @@ python -I herramientas/importar_estados.py estados/movimientos.csv respaldos/fin
 adb exec-in run-as com.misfinanzas sh -c 'cat > files/importar.tmp' < importar.json
 adb shell run-as com.misfinanzas mv files/importar.tmp files/importar.json
 adb shell am start -n com.misfinanzas/.MainActivity     # logcat: "Registro: Importados N movimientos"
+```
+
+Para revisar un estado antes de cargarlo (cuadre, intereses y comisiones, duplicados, cargos que la app no
+tenía, mensualidades, comercios nuevos):
+
+```bash
+python -I herramientas/revisar_estado.py estados/<banco>/<archivo>.txt respaldos/finanzas.db
 ```
 
 En el paso 3 cada línea debe decir `[OK]`. Un `[DIF]` solo es aceptable si lo explican mensualidades,

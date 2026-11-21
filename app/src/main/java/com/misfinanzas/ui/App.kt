@@ -41,6 +41,7 @@ import androidx.glance.appwidget.updateAll
 import com.misfinanzas.Ajustes
 import com.misfinanzas.BuildConfig
 import com.misfinanzas.FinanzasViewModel
+import com.misfinanzas.Respaldo
 import com.misfinanzas.widget.FinanzasWidget
 import kotlinx.coroutines.CoroutineScope
 import com.misfinanzas.R
@@ -62,6 +63,7 @@ fun App(abrirAjustesNotificaciones: () -> Unit, puedeBloquear: Boolean, vm: Fina
     val scope = rememberCoroutineScope()
     var seccion by rememberSaveable { mutableStateOf(Seccion.MOVIMIENTOS) }
     val sinRevisar by vm.crudasSinRevisar.collectAsStateWithLifecycle()
+    var verRespaldo by rememberSaveable { mutableStateOf(false) }
 
     val botonMenu: @Composable () -> Unit = {
         IconButton(onClick = { scope.launch { drawer.open() } }) {
@@ -110,6 +112,26 @@ fun App(abrirAjustesNotificaciones: () -> Unit, puedeBloquear: Boolean, vm: Fina
                     R.drawable.ic_visibility_off,
                     Ajustes.saldosOcultos,
                 ) { cambiarOcultos(ctx, scope, it) }
+                HorizontalDivider(Modifier.padding(horizontal = 28.dp, vertical = 12.dp))
+                NavigationDrawerItem(
+                    icon = { Icon(painterResource(R.drawable.ic_cloud_upload), contentDescription = null) },
+                    label = {
+                        Column {
+                            Text("Respaldo en Drive")
+                            Text(
+                                resumenRespaldo(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (Respaldo.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    selected = false,
+                    onClick = {
+                        verRespaldo = true
+                        scope.launch { drawer.close() }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
                 Spacer(Modifier.height(12.dp))
             }
         },
@@ -127,6 +149,7 @@ fun App(abrirAjustesNotificaciones: () -> Unit, puedeBloquear: Boolean, vm: Fina
                 PantallaNotas(notas, vm::guardarNota, vm::eliminarNota, botonMenu)
             }
         }
+        if (verRespaldo) DialogoRespaldo(onCerrar = { verRespaldo = false })
     }
 }
 

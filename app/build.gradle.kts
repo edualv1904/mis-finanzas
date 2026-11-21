@@ -63,6 +63,8 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("androidx.glance:glance-material3:1.1.1")
     implementation("com.google.maps.android:maps-compose:6.2.1")
+    // Permiso de Google para subir el respaldo semanal a Drive (solo archivos que crea la app).
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
 
     val room = "2.6.1"
     implementation("androidx.room:room-runtime:$room")

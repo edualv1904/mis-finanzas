@@ -97,6 +97,12 @@ fun PantallaRecolectadas(
                 }
             }
             if (filtro == Filtro.IGNORADAS && visibles.isNotEmpty()) {
+                Text(
+                    "Se borran solas 30 días después de llegar.",
+                    Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 TextButton(onClick = onBorrarIgnoradas, Modifier.padding(horizontal = 8.dp)) {
                     Text("Borrar todas las ignoradas")
                 }

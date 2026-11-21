@@ -219,7 +219,20 @@ object NuParser : FuenteNotificacion {
         """Compraste\s+en\s+(.+?)\s+con\s+tu\s+tarjeta.*?\s+por\s+\$\s?$MONTO""", RegexOption.IGNORE_CASE
     )
 
+    /** "Devolución por $100.00" / "Recibiste una devolución de COMERCIO a tu tarjeta con terminación 1234 por $100.00." */
+    private val devolucion = Regex(
+        """devoluci[oó]n\s+de\s+(.+?)\s+a\s+tu\s+tarjeta.*?\s+por\s+\$\s?$MONTO""", RegexOption.IGNORE_CASE
+    )
+
     override fun parse(titulo: String, texto: String): Pago? {
+        devolucion.find(texto)?.let { d ->
+            return Pago(
+                comercio = limpiar(d.groupValues[1]),
+                monto = monto(d.groupValues[2]) ?: return null,
+                tarjeta = Tarjetas.NU,
+                tipo = Tipos.INGRESO,
+            )
+        }
         val m = regex.find(texto) ?: return null
         return Pago(
             comercio = limpiar(m.groupValues[1]),

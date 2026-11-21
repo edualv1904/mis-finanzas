@@ -214,6 +214,10 @@ interface TransaccionDao {
     @Query("DELETE FROM notificaciones_crudas WHERE etiqueta = 'ignorar'")
     suspend fun borrarCrudasIgnoradas()
 
+    /** Limpieza automática: las que marcaste "Ignorar" y llegaron antes de [antesDe]. */
+    @Query("DELETE FROM notificaciones_crudas WHERE etiqueta = 'ignorar' AND fecha < :antesDe")
+    suspend fun borrarIgnoradasViejas(antesDe: Long): Int
+
     @Query("SELECT * FROM notas ORDER BY fecha DESC")
     fun observarNotas(): Flow<List<Nota>>
 

@@ -86,6 +86,14 @@ object Registro {
      * Registra las notificaciones que etiquetaste en la pantalla de recolección y que ahora sí
      * sabemos leer. Tu etiqueta manda sobre el tipo que adivine el parser. Es seguro repetirlo.
      */
+    /** Las notificaciones que marcaste "Ignorar" se borran solas a los 30 días de haber llegado. */
+    suspend fun limpiarIgnoradas(ctx: Context): Int {
+        val limite = System.currentTimeMillis() - DIAS_IGNORADAS * 86_400_000L
+        return FinanzasDb.get(ctx).dao().borrarIgnoradasViejas(limite).also {
+            if (it > 0) Log.i("Registro", "Borradas $it notificaciones ignoradas de hace más de $DIAS_IGNORADAS días")
+        }
+    }
+
     suspend fun importarCrudasEtiquetadas(ctx: Context): Int {
         var nuevas = 0
         for (n in FinanzasDb.get(ctx).dao().crudasEtiquetadas()) {
@@ -156,6 +164,7 @@ object Registro {
     }
 
     private const val ARCHIVO_IMPORTAR = "importar.json"
+    private const val DIAS_IGNORADAS = 30
 
     suspend fun guardar(ctx: Context, t: Transaccion, recordarCategoria: Boolean) {
         val dao = FinanzasDb.get(ctx).dao()

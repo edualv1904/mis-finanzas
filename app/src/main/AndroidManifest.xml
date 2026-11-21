@@ -14,6 +14,9 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <!-- Dibujar el mapa y escribir la dirección -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Saber si estás en el WiFi de casa antes de subir el respaldo semanal a Drive -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Para poder mostrar el icono de las apps de tus bancos como logo de cada tarjeta -->
     <queries>

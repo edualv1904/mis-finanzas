@@ -68,6 +68,10 @@ class ParsersTest {
             NuParser.parse("Compra aprobada por \$200.00", "Compraste en CARLS JR CENTRO con tu tarjeta con terminación 5678 por \$200.00."),
             "CARLS JR CENTRO", 200.0, "Nu",
         )
+        assertPago(
+            NuParser.parse("Devolución por \$100.00", "Recibiste una devolución de RECARGAS CENTRO a tu tarjeta con terminación 1234 por \$100.00."),
+            "RECARGAS CENTRO", 100.0, "Nu", Tipos.INGRESO,
+        )
         assertNull(NuParser.parse("Con \$200 puedes tener más crédito", "Empieza a ahorrar en una Cajita, aumenta tu línea de crédito y gana más poder de compra."))
     }
 

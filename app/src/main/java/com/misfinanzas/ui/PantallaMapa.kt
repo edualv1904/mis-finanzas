@@ -103,7 +103,7 @@ fun PantallaMapa(vm: FinanzasViewModel, botonMenu: @Composable () -> Unit) {
                 Column(Modifier.padding(16.dp)) {
                     Text(
                         if (gastos.isEmpty()) "Sin compras con ubicación este mes"
-                        else "${gastos.size} compras en persona · ${dinero(gastos.sumOf { it.monto })}",
+                        else "${gastos.size} ${if (gastos.size == 1) "compra" else "compras"} en persona · ${dinero(gastos.sumOf { it.monto })}",
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
