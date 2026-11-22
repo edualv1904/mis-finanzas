@@ -141,7 +141,9 @@ object Cobros {
     /** Cambiaste un acuerdo: lo pendiente toma el monto y día nuevos; lo pagado no se toca. */
     suspend fun editar(ctx: Context, a: Acuerdo) {
         val dao = FinanzasDb.get(ctx).dao()
-        dao.actualizarAcuerdo(a)
+        // Si se había cerrado solo (una vez, ya pagado) y ahora es cada mes o lleva más meses, vuelve a generar.
+        val reabrir = !a.activo && (a.meses == null || dao.cobrosDe(a.id).size < a.meses)
+        dao.actualizarAcuerdo(if (reabrir) a.copy(activo = true) else a)
         a.meses?.let { dao.borrarCobrosDespuesDe(a.id, it) }
         for (c in dao.cobrosDe(a.id).filter { it.pagado == null }) {
             dao.ajustarCobro(c.id, a.monto, vence(YearMonth.parse(c.mes), a.dia))
