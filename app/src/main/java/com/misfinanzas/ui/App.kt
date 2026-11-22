@@ -52,6 +52,7 @@ private enum class Seccion(val titulo: String, @DrawableRes val icono: Int) {
     MOVIMIENTOS("Movimientos", R.drawable.ic_receipt_long),
     TARJETAS("Tarjetas", R.drawable.ic_credit_card),
     COBROS("Me deben", R.drawable.ic_payments),
+    DEBO("Debo", R.drawable.ic_account_balance),
     MAPA("Mapa", R.drawable.ic_location_on),
     NOTIFICACIONES("Notificaciones", R.drawable.ic_notifications),
     NOTAS("Notas e ideas", R.drawable.ic_edit_note),
@@ -63,7 +64,13 @@ fun App(abrirAjustesNotificaciones: () -> Unit, puedeBloquear: Boolean, abrir: S
     val ctx = LocalContext.current
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var seccion by rememberSaveable { mutableStateOf(if (abrir == Cobros.ABRIR_COBROS) Seccion.COBROS else Seccion.MOVIMIENTOS) }
+    var seccion by rememberSaveable { mutableStateOf(
+            when (abrir) {
+                Cobros.ABRIR_COBROS -> Seccion.COBROS
+                com.misfinanzas.Deudas.ABRIR_DEBO -> Seccion.DEBO
+                else -> Seccion.MOVIMIENTOS
+            }
+        ) }
     val cobros by vm.cobros.collectAsStateWithLifecycle()
     val atrasados = cobros.count { Cobros.atrasado(it, System.currentTimeMillis()) }
     val sinRevisar by vm.crudasSinRevisar.collectAsStateWithLifecycle()
@@ -160,6 +167,21 @@ fun App(abrirAjustesNotificaciones: () -> Unit, puedeBloquear: Boolean, abrir: S
                     onCambiarMonto = vm::cambiarMontoCobro,
                     onTerminar = vm::terminarAcuerdo,
                     onBorrar = vm::borrarAcuerdo,
+                    botonMenu = botonMenu,
+                )
+            }
+            Seccion.DEBO -> {
+                val deudas by vm.deudas.collectAsStateWithLifecycle()
+                val movs by vm.deudaMovs.collectAsStateWithLifecycle()
+                val salidas by vm.transferenciasRecientes.collectAsStateWithLifecycle()
+                PantallaDebo(
+                    deudas, movs, salidas,
+                    onCrear = vm::crearDeuda,
+                    onEditar = vm::editarDeuda,
+                    onBorrar = vm::borrarDeuda,
+                    onAnotar = vm::anotarEnDeuda,
+                    onEditarMov = vm::editarDeudaMov,
+                    onBorrarMov = vm::borrarDeudaMov,
                     botonMenu = botonMenu,
                 )
             }

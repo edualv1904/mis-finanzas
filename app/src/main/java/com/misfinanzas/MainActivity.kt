@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
         RecordatorioPagoWorker.programar(applicationContext)
         Respaldo.programar(applicationContext)
         Cobros.programar(applicationContext)
+        Deudas.programar(applicationContext)
         setContent {
             Tema {
                 if (bloqueada) {

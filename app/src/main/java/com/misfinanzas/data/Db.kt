@@ -137,6 +137,37 @@ data class Cobro(
     val ultimoAviso: Long? = null,
 )
 
+/**
+ * "Debo": lo que le debes a alguien sin fecha fija. Es una libreta: lo que se suma ([DeudaMov] tipo
+ * cargo: un préstamo, cada clase o consulta) menos lo que vas abonando.
+ */
+@Entity(tableName = "deudas")
+data class Deuda(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val persona: String,
+    /** Costo por sesión o visita (clases, consultas); null = solo un saldo (un préstamo). */
+    val tarifa: Double? = null,
+    /** Preguntarte cada sábado si fuiste (solo con tarifa). */
+    val preguntarSabado: Boolean = false,
+    val activa: Boolean = true,
+    val creada: Long = System.currentTimeMillis(),
+)
+
+/** Un renglón de la libreta de una [Deuda]. */
+@Entity(tableName = "deuda_movs", indices = [Index("deudaId")])
+data class DeudaMov(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val deudaId: Long,
+    val fecha: Long,
+    /** Siempre positivo: [tipo] dice si suma o resta. */
+    val monto: Double,
+    /** [Deudas.CARGO] (sesión, préstamo, saldo inicial) o [Deudas.ABONO] (lo que pagaste). */
+    val tipo: String,
+    val nota: String = "",
+    /** La transferencia con la que pagaste, si la ligaste. */
+    val transaccionId: Long? = null,
+)
+
 /** Ideas que apuntas fuera de casa para platicarlas después. */
 @Entity(tableName = "notas")
 data class Nota(
@@ -321,6 +352,48 @@ interface TransaccionDao {
     @Query("DELETE FROM cobros WHERE acuerdoId = :acuerdoId AND pagado IS NULL AND numero > :ultimo")
     suspend fun borrarCobrosDespuesDe(acuerdoId: Long, ultimo: Int)
 
+    // ---------- Debo ----------
+
+    @Query("SELECT * FROM deudas ORDER BY persona COLLATE NOCASE")
+    fun observarDeudas(): Flow<List<com.misfinanzas.data.Deuda>>
+
+    @Query("SELECT * FROM deuda_movs ORDER BY fecha DESC, id DESC")
+    fun observarDeudaMovs(): Flow<List<com.misfinanzas.data.DeudaMov>>
+
+    @Query("SELECT * FROM deudas WHERE id = :id")
+    suspend fun deudaPorId(id: Long): com.misfinanzas.data.Deuda?
+
+    @Query("SELECT * FROM deudas WHERE activa = 1 AND preguntarSabado = 1 AND tarifa IS NOT NULL")
+    suspend fun deudasQuePreguntan(): List<com.misfinanzas.data.Deuda>
+
+    @Query("SELECT * FROM deuda_movs WHERE deudaId = :deudaId")
+    suspend fun movsDe(deudaId: Long): List<com.misfinanzas.data.DeudaMov>
+
+    @Insert
+    suspend fun insertarDeuda(d: com.misfinanzas.data.Deuda): Long
+
+    @androidx.room.Update
+    suspend fun actualizarDeuda(d: com.misfinanzas.data.Deuda)
+
+    @Query("DELETE FROM deudas WHERE id = :id")
+    suspend fun borrarDeuda(id: Long)
+
+    @Query("DELETE FROM deuda_movs WHERE deudaId = :deudaId")
+    suspend fun borrarMovsDe(deudaId: Long)
+
+    @Insert
+    suspend fun insertarDeudaMov(m: com.misfinanzas.data.DeudaMov): Long
+
+    @androidx.room.Update
+    suspend fun actualizarDeudaMov(m: com.misfinanzas.data.DeudaMov)
+
+    @Query("DELETE FROM deuda_movs WHERE id = :id")
+    suspend fun borrarDeudaMov(id: Long)
+
+    /** Transferencias que salieron: candidatas a ser un abono de lo que debes. */
+    @Query("SELECT * FROM transacciones WHERE tipo = 'transferencia' AND fecha >= :desde ORDER BY fecha DESC")
+    fun observarTransferenciasDesde(desde: Long): Flow<List<Transaccion>>
+
     /** Ingresos recientes: candidatos a ser el pago de alguien. */
     @Query("SELECT * FROM transacciones WHERE tipo = 'ingreso' AND fecha >= :desde ORDER BY fecha DESC")
     fun observarIngresosDesde(desde: Long): Flow<List<Transaccion>>
@@ -353,7 +426,7 @@ interface TransaccionDao {
     fun observarTarjetas(): Flow<List<String>>
 }
 
-@Database(entities = [Transaccion::class, CategoriaComercio::class, NotificacionCruda::class, Nota::class, TarjetaConfig::class, ClaveDescartada::class, Acuerdo::class, Cobro::class], version = 12, exportSchema = false)
+@Database(entities = [Transaccion::class, CategoriaComercio::class, NotificacionCruda::class, Nota::class, TarjetaConfig::class, ClaveDescartada::class, Acuerdo::class, Cobro::class, Deuda::class, DeudaMov::class], version = 13, exportSchema = false)
 abstract class FinanzasDb : RoomDatabase() {
     abstract fun dao(): TransaccionDao
 
@@ -364,7 +437,7 @@ abstract class FinanzasDb : RoomDatabase() {
             instancia ?: synchronized(this) {
                 instancia ?: Room.databaseBuilder(
                     context.applicationContext, FinanzasDb::class.java, "finanzas.db"
-                ).addMigrations(MIGRACION_1_2, MIGRACION_2_3, MIGRACION_3_4, MIGRACION_4_5, MIGRACION_5_6, MIGRACION_6_7, MIGRACION_7_8, MIGRACION_8_9, MIGRACION_9_10, MIGRACION_10_11, MIGRACION_11_12).build().also { instancia = it }
+                ).addMigrations(MIGRACION_1_2, MIGRACION_2_3, MIGRACION_3_4, MIGRACION_4_5, MIGRACION_5_6, MIGRACION_6_7, MIGRACION_7_8, MIGRACION_8_9, MIGRACION_9_10, MIGRACION_10_11, MIGRACION_11_12, MIGRACION_12_13).build().also { instancia = it }
             }
     }
 }
@@ -502,6 +575,21 @@ private val MIGRACION_8_9 = object : Migration(8, 9) {
 private val MIGRACION_9_10 = object : Migration(9, 10) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS claves_descartadas (clave TEXT NOT NULL PRIMARY KEY)")
+    }
+}
+
+/** "Debo": tablas nuevas; no toca las existentes. */
+private val MIGRACION_12_13 = object : Migration(12, 13) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS deudas (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, persona TEXT NOT NULL, " +
+                "tarifa REAL, preguntarSabado INTEGER NOT NULL, activa INTEGER NOT NULL, creada INTEGER NOT NULL)"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS deuda_movs (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, deudaId INTEGER NOT NULL, " +
+                "fecha INTEGER NOT NULL, monto REAL NOT NULL, tipo TEXT NOT NULL, nota TEXT NOT NULL, transaccionId INTEGER)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_deuda_movs_deudaId ON deuda_movs (deudaId)")
     }
 }
 

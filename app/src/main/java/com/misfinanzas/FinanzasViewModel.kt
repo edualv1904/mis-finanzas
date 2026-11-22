@@ -147,4 +147,33 @@ class FinanzasViewModel(app: Application) : AndroidViewModel(app) {
         dao.borrarCobros(a.id)
         dao.borrarAcuerdo(a.id)
     }
+
+    // ---------- Debo ----------
+
+    val deudas: StateFlow<List<com.misfinanzas.data.Deuda>> = dao.observarDeudas()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val deudaMovs: StateFlow<List<com.misfinanzas.data.DeudaMov>> = dao.observarDeudaMovs()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Transferencias que salieron en los últimos 30 días: posibles abonos a lo que debes. */
+    val transferenciasRecientes: StateFlow<List<Transaccion>> = dao.observarTransferenciasDesde(System.currentTimeMillis() - 30L * 86_400_000L)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun crearDeuda(persona: String, debesAhora: Double?, tarifa: Double?, preguntar: Boolean) = viewModelScope.launch {
+        Deudas.crear(getApplication(), persona, debesAhora, tarifa, preguntar)
+    }
+
+    fun editarDeuda(d: com.misfinanzas.data.Deuda) = viewModelScope.launch { dao.actualizarDeuda(d) }
+
+    fun borrarDeuda(d: com.misfinanzas.data.Deuda) = viewModelScope.launch {
+        dao.borrarMovsDe(d.id)
+        dao.borrarDeuda(d.id)
+    }
+
+    fun anotarEnDeuda(m: com.misfinanzas.data.DeudaMov) = viewModelScope.launch { dao.insertarDeudaMov(m) }
+
+    fun editarDeudaMov(m: com.misfinanzas.data.DeudaMov) = viewModelScope.launch { dao.actualizarDeudaMov(m) }
+
+    fun borrarDeudaMov(m: com.misfinanzas.data.DeudaMov) = viewModelScope.launch { dao.borrarDeudaMov(m.id) }
 }

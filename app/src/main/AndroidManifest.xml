@@ -57,6 +57,11 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:windowSoftInputMode="stateVisible|adjustResize" />
 
+        <!-- Botones "Sí, el viernes / Sí, el sábado / No fui" de la pregunta del sábado (Debo) -->
+        <receiver
+            android:name=".RespuestaDeudaReceiver"
+            android:exported="false" />
+
         <!-- Redibuja el widget justo después de instalar una versión nueva -->
         <receiver
             android:name=".widget.AppActualizadaReceiver"
