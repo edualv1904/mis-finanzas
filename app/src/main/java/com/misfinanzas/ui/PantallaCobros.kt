@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -62,7 +63,7 @@ private fun corto(millis: Long) = diaDe(millis).format(fmtCorto).replace(".", ""
 
 /** Cuál mensualidad es: "9 de 18" en un acuerdo a meses, o el mes ("Noviembre 2026") si es cada mes. */
 private fun etiqueta(c: Cobro, a: Acuerdo?) =
-    if (a?.meses != null) "${c.numero} de ${a.meses}" else textoMes(YearMonth.parse(c.mes))
+    if (a?.meses != null && a.meses > 1) "${c.numero} de ${a.meses}" else textoMes(YearMonth.parse(c.mes))
 
 /** Los acuerdos se agrupan por concepto ("Spotify", "Compu"): uno por cosa en la página principal. */
 private fun grupoDe(a: Acuerdo) = a.concepto.trim().lowercase()
@@ -119,6 +120,8 @@ fun PantallaCobros(
     // El grupo abierto desapareció (lo borraste o le cambiaste el nombre): vuelve a la lista.
     val abierto = grupoAbierto?.takeIf { it in grupos }
     BackHandler(enabled = abierto != null) { grupoAbierto = null }
+    // Cada vista (la lista y cada concepto) empieza desde arriba.
+    val estadoLista = remember(abierto) { LazyListState() }
 
     Scaffold(
         topBar = {
@@ -139,6 +142,7 @@ fun PantallaCobros(
     ) { padding ->
         LazyColumn(
             Modifier.padding(padding).fillMaxSize(),
+            state = estadoLista,
             contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 96.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
