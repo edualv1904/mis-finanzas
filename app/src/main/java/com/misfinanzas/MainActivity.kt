@@ -44,9 +44,12 @@ class MainActivity : ComponentActivity() {
             Registro.importarCrudasEtiquetadas(applicationContext)
             Ubicacion.completarDirecciones(applicationContext)
             Registro.limpiarIgnoradas(applicationContext)
+            // Por si el widget se quedó en "cargando" (p. ej. después de instalar una versión nueva).
+            Registro.refrescarWidgets(applicationContext)
         }
         RecordatorioPagoWorker.programar(applicationContext)
         Respaldo.programar(applicationContext)
+        Cobros.programar(applicationContext)
         setContent {
             Tema {
                 if (bloqueada) {
@@ -57,6 +60,7 @@ class MainActivity : ComponentActivity() {
                             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                         },
                         puedeBloquear = puedeBloquear(),
+                        abrir = intent?.getStringExtra(Cobros.EXTRA_ABRIR),
                     )
                 }
             }

@@ -84,8 +84,13 @@ def main(csv_path: Path, db_path: Path, aplicar: bool, exportar: str | None = No
             continue
         # Lo que la app ya capturó por notificación (misma tarjeta y monto, ±2 días) no se duplica.
         fecha = mediodia(dia)
-        if any(t == r["tarjeta"] and abs(m - monto) < 0.005 and abs(f - fecha) <= 2 * 86_400_000 and fu != "estado"
-               for t, m, f, fu in existentes):
+        # Cada movimiento de la app cubre uno solo del estado (tres recargas de $25 en el estado y dos en
+        # la app = falta una): se usa el más cercano en fecha y se quita de la lista.
+        parecidos = [e for e in existentes
+                     if e[0] == r["tarjeta"] and abs(e[1] - monto) < 0.005 and abs(e[2] - fecha) <= 2 * 86_400_000
+                     and e[3] != "estado"]
+        if parecidos:
+            existentes.remove(min(parecidos, key=lambda e: abs(e[2] - fecha)))
             ya_en_app.append((r["fecha"], comercio, monto))
             continue
         if r["tipo"] in ("interes", "iva", "comision"):

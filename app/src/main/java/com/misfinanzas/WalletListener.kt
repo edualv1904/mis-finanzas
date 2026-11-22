@@ -43,12 +43,16 @@ class WalletListener : NotificationListenerService() {
             }
             return
         }
-        val clave = Claves.de(fuente.id, sbn.key, titulo, texto)
+        val clave = Claves.de(fuente.id, sbn.key, titulo, texto, fecha)
 
         scope.launch {
             val resultado = Registro.registrarPago(applicationContext, pago, fuente.id, fecha, clave)
             Log.i(TAG, "$resultado: $pago")
-            if (resultado == Registro.Resultado.NUEVO) Ubicacion.anotar(applicationContext, clave, fecha)
+            if (resultado == Registro.Resultado.NUEVO) {
+                Ubicacion.anotar(applicationContext, clave, fecha)
+                // Una transferencia que te llega puede ser el pago de alguien que te debe.
+                if (pago.tipo == Tipos.INGRESO) Cobros.alRecibirAbono(applicationContext, pago.monto)
+            }
         }
     }
 

@@ -20,6 +20,8 @@ import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
+import androidx.glance.appwidget.updateAll
+import kotlinx.coroutines.launch
 import androidx.glance.background
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
@@ -134,4 +136,22 @@ class FinanzasWidget : GlanceAppWidget() {
 
 class FinanzasWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = FinanzasWidget()
+}
+
+/**
+ * Al instalar una versión nueva, Android deja el widget en "cargando" hasta su próxima actualización
+ * (hasta 30 min). Este aviso llega justo después de instalar y lo redibuja de inmediato.
+ */
+class AppActualizadaReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(ctx: Context, intent: android.content.Intent) {
+        if (intent.action != android.content.Intent.ACTION_MY_PACKAGE_REPLACED) return
+        val pendiente = goAsync()
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+            try {
+                FinanzasWidget().updateAll(ctx.applicationContext)
+            } finally {
+                pendiente.finish()
+            }
+        }
+    }
 }

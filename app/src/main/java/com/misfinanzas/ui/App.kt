@@ -41,6 +41,7 @@ import androidx.glance.appwidget.updateAll
 import com.misfinanzas.Ajustes
 import com.misfinanzas.BuildConfig
 import com.misfinanzas.FinanzasViewModel
+import com.misfinanzas.Cobros
 import com.misfinanzas.Respaldo
 import com.misfinanzas.widget.FinanzasWidget
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +51,7 @@ import kotlinx.coroutines.launch
 private enum class Seccion(val titulo: String, @DrawableRes val icono: Int) {
     MOVIMIENTOS("Movimientos", R.drawable.ic_receipt_long),
     TARJETAS("Tarjetas", R.drawable.ic_credit_card),
+    COBROS("Me deben", R.drawable.ic_payments),
     MAPA("Mapa", R.drawable.ic_location_on),
     NOTIFICACIONES("Notificaciones", R.drawable.ic_notifications),
     NOTAS("Notas e ideas", R.drawable.ic_edit_note),
@@ -57,11 +59,13 @@ private enum class Seccion(val titulo: String, @DrawableRes val icono: Int) {
 
 /** Contenedor con menú lateral para moverse entre las secciones de la app. */
 @Composable
-fun App(abrirAjustesNotificaciones: () -> Unit, puedeBloquear: Boolean, vm: FinanzasViewModel = viewModel()) {
+fun App(abrirAjustesNotificaciones: () -> Unit, puedeBloquear: Boolean, abrir: String? = null, vm: FinanzasViewModel = viewModel()) {
     val ctx = LocalContext.current
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var seccion by rememberSaveable { mutableStateOf(Seccion.MOVIMIENTOS) }
+    var seccion by rememberSaveable { mutableStateOf(if (abrir == Cobros.ABRIR_COBROS) Seccion.COBROS else Seccion.MOVIMIENTOS) }
+    val cobros by vm.cobros.collectAsStateWithLifecycle()
+    val atrasados = cobros.count { Cobros.atrasado(it, System.currentTimeMillis()) }
     val sinRevisar by vm.crudasSinRevisar.collectAsStateWithLifecycle()
     var verRespaldo by rememberSaveable { mutableStateOf(false) }
 
@@ -78,6 +82,8 @@ fun App(abrirAjustesNotificaciones: () -> Unit, puedeBloquear: Boolean, vm: Fina
 
     ModalNavigationDrawer(
         drawerState = drawer,
+        // En el mapa, deslizar el dedo debe mover el mapa y no abrir el menú (se abre con el botón).
+        gesturesEnabled = seccion != Seccion.MAPA || drawer.isOpen,
         drawerContent = {
             ModalDrawerSheet {
                 Text(
@@ -94,7 +100,10 @@ fun App(abrirAjustesNotificaciones: () -> Unit, puedeBloquear: Boolean, vm: Fina
                             seccion = s
                             scope.launch { drawer.close() }
                         },
-                        badge = { if (s == Seccion.NOTIFICACIONES && sinRevisar > 0) Text("$sinRevisar") },
+                        badge = {
+                            if (s == Seccion.NOTIFICACIONES && sinRevisar > 0) Text("$sinRevisar")
+                            if (s == Seccion.COBROS && atrasados > 0) Text("$atrasados", color = MaterialTheme.colorScheme.error)
+                        },
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
@@ -140,6 +149,20 @@ fun App(abrirAjustesNotificaciones: () -> Unit, puedeBloquear: Boolean, vm: Fina
             Seccion.MOVIMIENTOS -> PantallaPrincipal(abrirAjustesNotificaciones, botonMenu, vm)
             Seccion.TARJETAS -> PantallaTarjetas(vm, botonMenu)
             Seccion.MAPA -> PantallaMapa(vm, botonMenu)
+            Seccion.COBROS -> {
+                val acuerdos by vm.acuerdos.collectAsStateWithLifecycle()
+                val ingresos by vm.ingresosRecientes.collectAsStateWithLifecycle()
+                PantallaCobros(
+                    acuerdos, cobros, ingresos,
+                    onCrear = vm::crearAcuerdo,
+                    onEditar = vm::editarAcuerdo,
+                    onMarcar = vm::marcarCobro,
+                    onCambiarMonto = vm::cambiarMontoCobro,
+                    onTerminar = vm::terminarAcuerdo,
+                    onBorrar = vm::borrarAcuerdo,
+                    botonMenu = botonMenu,
+                )
+            }
             Seccion.NOTIFICACIONES -> {
                 val crudas by vm.crudas.collectAsStateWithLifecycle()
                 PantallaRecolectadas(crudas, vm::etiquetar, vm::borrarIgnoradas, botonMenu)

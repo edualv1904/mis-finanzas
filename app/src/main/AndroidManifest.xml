@@ -31,7 +31,7 @@
     <application
         android:allowBackup="true"
         android:label="@string/app_name"
-        android:icon="@android:drawable/ic_menu_agenda"
+        android:icon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.Material.NoActionBar">
 
         <meta-data
@@ -56,6 +56,15 @@
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:windowSoftInputMode="stateVisible|adjustResize" />
+
+        <!-- Redibuja el widget justo después de instalar una versión nueva -->
+        <receiver
+            android:name=".widget.AppActualizadaReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <receiver
             android:name=".widget.FinanzasWidgetReceiver"

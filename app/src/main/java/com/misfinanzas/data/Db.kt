@@ -97,6 +97,46 @@ data class TarjetaConfig(
 @Entity(tableName = "claves_descartadas")
 data class ClaveDescartada(@PrimaryKey val clave: String)
 
+/**
+ * "Me deben": alguien te paga cada mes una cantidad (su parte de Spotify, las mensualidades de una
+ * compra que hiciste por él). No toca tus movimientos: solo sirve para cobrar y recordar.
+ */
+@Entity(tableName = "acuerdos")
+data class Acuerdo(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val persona: String,
+    val concepto: String,
+    /** Lo que te paga cada mes. */
+    val monto: Double,
+    /** Día del mes en que te debe pagar. */
+    val dia: Int,
+    /** Primer mes del acuerdo, "AAAA-MM". */
+    val desde: String,
+    /** Total de meses (p. ej. 18 de una compra a meses); null = cada mes, sin fin. */
+    val meses: Int? = null,
+    val activo: Boolean = true,
+)
+
+/** Un mes de un [Acuerdo]: lo que te deben ese mes y si ya te lo pagaron. */
+@Entity(tableName = "cobros", indices = [Index(value = ["acuerdoId", "mes"], unique = true)])
+data class Cobro(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val acuerdoId: Long,
+    /** "AAAA-MM". */
+    val mes: String,
+    /** 1, 2, 3… desde el primer mes del acuerdo. */
+    val numero: Int,
+    val monto: Double,
+    /** Mediodía del día en que debía pagarte. */
+    val vence: Long,
+    /** Cuándo te pagó; null = pendiente. */
+    val pagado: Long? = null,
+    /** El abono (movimiento de ingreso) con el que te pagó, si lo ligaste. */
+    val abonoId: Long? = null,
+    /** Última vez que la app te avisó que no te ha pagado. */
+    val ultimoAviso: Long? = null,
+)
+
 /** Ideas que apuntas fuera de casa para platicarlas después. */
 @Entity(tableName = "notas")
 data class Nota(
@@ -122,6 +162,13 @@ interface TransaccionDao {
            OR EXISTS(SELECT 1 FROM claves_descartadas WHERE clave = :clave)"""
     )
     suspend fun claveVista(clave: String): Boolean
+
+    /** ¿Hay un movimiento con llave vieja (solo texto, sin hora) igual a [base] entre [desde] y [hasta]? */
+    @Query(
+        """SELECT EXISTS(SELECT 1 FROM transacciones WHERE fecha BETWEEN :desde AND :hasta
+             AND (claveUnica = :base OR claveVinculada = :base))"""
+    )
+    suspend fun textoVistoCerca(base: String, desde: Long, hasta: Long): Boolean
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun descartarClave(c: ClaveDescartada)
@@ -221,6 +268,63 @@ interface TransaccionDao {
     @Query("SELECT * FROM notas ORDER BY fecha DESC")
     fun observarNotas(): Flow<List<Nota>>
 
+    // ---------- Me deben ----------
+
+    @Insert
+    suspend fun insertarAcuerdo(a: Acuerdo): Long
+
+    @Update
+    suspend fun actualizarAcuerdo(a: Acuerdo)
+
+    @Query("SELECT * FROM acuerdos WHERE activo = 1")
+    suspend fun acuerdosActivos(): List<Acuerdo>
+
+    @Query("SELECT * FROM acuerdos")
+    suspend fun acuerdosTodos(): List<Acuerdo>
+
+    @Query("SELECT * FROM acuerdos ORDER BY activo DESC, persona")
+    fun observarAcuerdos(): Flow<List<Acuerdo>>
+
+    @Query("DELETE FROM acuerdos WHERE id = :id")
+    suspend fun borrarAcuerdo(id: Long)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertarCobros(c: List<Cobro>)
+
+    @Query("SELECT * FROM cobros ORDER BY vence")
+    fun observarCobros(): Flow<List<Cobro>>
+
+    @Query("SELECT * FROM cobros WHERE pagado IS NULL ORDER BY vence")
+    suspend fun cobrosPendientes(): List<Cobro>
+
+    @Query("SELECT * FROM cobros WHERE acuerdoId = :acuerdoId ORDER BY numero")
+    suspend fun cobrosDe(acuerdoId: Long): List<Cobro>
+
+    @Query("UPDATE cobros SET pagado = :pagado, abonoId = :abonoId WHERE id = :id")
+    suspend fun marcarCobro(id: Long, pagado: Long?, abonoId: Long?)
+
+    @Query("UPDATE cobros SET ultimoAviso = :cuando WHERE id IN (:ids)")
+    suspend fun cobrosAvisados(ids: List<Long>, cuando: Long)
+
+    @Query("DELETE FROM cobros WHERE acuerdoId = :acuerdoId AND pagado IS NULL")
+    suspend fun borrarCobrosPendientes(acuerdoId: Long)
+
+    @Query("DELETE FROM cobros WHERE acuerdoId = :acuerdoId")
+    suspend fun borrarCobros(acuerdoId: Long)
+
+    @Query("UPDATE cobros SET monto = :monto, vence = :vence WHERE id = :id")
+    suspend fun ajustarCobro(id: Long, monto: Double, vence: Long)
+
+    @Query("UPDATE cobros SET monto = :monto WHERE id = :id")
+    suspend fun cambiarMontoCobro(id: Long, monto: Double)
+
+    @Query("DELETE FROM cobros WHERE acuerdoId = :acuerdoId AND pagado IS NULL AND numero > :ultimo")
+    suspend fun borrarCobrosDespuesDe(acuerdoId: Long, ultimo: Int)
+
+    /** Ingresos recientes: candidatos a ser el pago de alguien. */
+    @Query("SELECT * FROM transacciones WHERE tipo = 'ingreso' AND fecha >= :desde ORDER BY fecha DESC")
+    fun observarIngresosDesde(desde: Long): Flow<List<Transaccion>>
+
     @Upsert
     suspend fun guardarNota(n: Nota)
 
@@ -249,7 +353,7 @@ interface TransaccionDao {
     fun observarTarjetas(): Flow<List<String>>
 }
 
-@Database(entities = [Transaccion::class, CategoriaComercio::class, NotificacionCruda::class, Nota::class, TarjetaConfig::class, ClaveDescartada::class], version = 11, exportSchema = false)
+@Database(entities = [Transaccion::class, CategoriaComercio::class, NotificacionCruda::class, Nota::class, TarjetaConfig::class, ClaveDescartada::class, Acuerdo::class, Cobro::class], version = 12, exportSchema = false)
 abstract class FinanzasDb : RoomDatabase() {
     abstract fun dao(): TransaccionDao
 
@@ -260,7 +364,7 @@ abstract class FinanzasDb : RoomDatabase() {
             instancia ?: synchronized(this) {
                 instancia ?: Room.databaseBuilder(
                     context.applicationContext, FinanzasDb::class.java, "finanzas.db"
-                ).addMigrations(MIGRACION_1_2, MIGRACION_2_3, MIGRACION_3_4, MIGRACION_4_5, MIGRACION_5_6, MIGRACION_6_7, MIGRACION_7_8, MIGRACION_8_9, MIGRACION_9_10, MIGRACION_10_11).build().also { instancia = it }
+                ).addMigrations(MIGRACION_1_2, MIGRACION_2_3, MIGRACION_3_4, MIGRACION_4_5, MIGRACION_5_6, MIGRACION_6_7, MIGRACION_7_8, MIGRACION_8_9, MIGRACION_9_10, MIGRACION_10_11, MIGRACION_11_12).build().also { instancia = it }
             }
     }
 }
@@ -341,13 +445,25 @@ private val MIGRACION_5_6 = object : Migration(5, 6) {
     }
 }
 
-/** Tabla de tarjetas de crédito. Las tarjetas y sus fechas se dan de alta desde la pantalla Tarjetas. */
+/** Tabla de tarjetas de crédito, con las fechas que tenías al crearla (13 nov 2026). */
 private val MIGRACION_6_7 = object : Migration(6, 7) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE IF NOT EXISTS tarjetas (nombre TEXT NOT NULL PRIMARY KEY, diaCorte INTEGER NOT NULL, " +
                 "diaLimite INTEGER NOT NULL, avisarDiasAntes INTEGER NOT NULL, pagadoCorte INTEGER)"
         )
+        listOf(
+            Triple(Tarjetas.BBVA_CREDITO, 12, 2),
+            Triple(Tarjetas.RAPPICARD, 15, 4),
+            Triple(Tarjetas.NU, 14, 26),
+            Triple(Tarjetas.MERCADO_PAGO, 21, 1),
+            Triple(Tarjetas.BANAMEX, 16, 6),
+        ).forEach { (nombre, corte, limite) ->
+            db.execSQL(
+                "INSERT OR IGNORE INTO tarjetas (nombre, diaCorte, diaLimite, avisarDiasAntes) VALUES (?, ?, ?, 3)",
+                arrayOf<Any>(nombre, corte, limite),
+            )
+        }
     }
 }
 
@@ -386,6 +502,23 @@ private val MIGRACION_8_9 = object : Migration(8, 9) {
 private val MIGRACION_9_10 = object : Migration(9, 10) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS claves_descartadas (clave TEXT NOT NULL PRIMARY KEY)")
+    }
+}
+
+/** "Me deben": tablas nuevas; no toca las existentes. */
+private val MIGRACION_11_12 = object : Migration(11, 12) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS acuerdos (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, persona TEXT NOT NULL, " +
+                "concepto TEXT NOT NULL, monto REAL NOT NULL, dia INTEGER NOT NULL, desde TEXT NOT NULL, meses INTEGER, " +
+                "activo INTEGER NOT NULL)"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS cobros (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, acuerdoId INTEGER NOT NULL, " +
+                "mes TEXT NOT NULL, numero INTEGER NOT NULL, monto REAL NOT NULL, vence INTEGER NOT NULL, pagado INTEGER, " +
+                "abonoId INTEGER, ultimoAviso INTEGER)"
+        )
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_cobros_acuerdoId_mes ON cobros (acuerdoId, mes)")
     }
 }
 

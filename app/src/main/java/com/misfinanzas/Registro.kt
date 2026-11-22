@@ -20,10 +20,19 @@ object Claves {
     /**
      * Wallet reutiliza la misma notificación (misma key) y solo le cambia el nombre del comercio
      * y la hora, así que la key basta. Los bancos mandan una notificación por movimiento con
-     * fecha/hora o monto en el texto, así que usamos el texto.
+     * monto en el texto, pero Nu, Rappi, BBVA y Mercado Pago no ponen la hora: dos recargas de $25 en
+     * el mismo comercio traen el mismo texto. Por eso al texto se le agrega la hora de la notificación
+     * ([fecha], el `when` que pone el banco; no cambia si la vuelve a mostrar).
+     * Sin [fecha] da la llave vieja (solo texto), que es la que tienen los movimientos anteriores.
      */
-    fun de(fuenteId: String, sbnKey: String, titulo: String, texto: String) =
-        if (fuenteId == WalletParser.id) "${WalletParser.id}|$sbnKey" else "$fuenteId|$titulo|$texto"
+    fun de(fuenteId: String, sbnKey: String, titulo: String, texto: String, fecha: Long? = null) = when {
+        fuenteId == WalletParser.id -> "${WalletParser.id}|$sbnKey"
+        fecha == null -> "$fuenteId|$titulo|$texto"
+        else -> "$fuenteId|$titulo|$texto|$fecha"
+    }
+
+    /** Margen para reconocer una notificación ya guardada con la llave vieja (las que siguen visibles). */
+    const val VENTANA_REPETIDA_MS = 10 * 60 * 1000L
 
     /** Convierte el formato viejo "fuente|<key de 5 partes>|fecha|titulo|texto" al actual. */
     fun migrar(vieja: String): String {
@@ -44,6 +53,13 @@ object Registro {
         candado.withLock {
             val dao = FinanzasDb.get(ctx).dao()
             if (dao.claveVista(clave)) return Resultado.REPETIDO
+            // Guardado antes de que la llave llevara la hora: mismo texto y casi la misma hora.
+            if (fuente != WalletParser.id && dao.textoVistoCerca(
+                    base = clave.substringBeforeLast('|'),
+                    desde = fecha - Claves.VENTANA_REPETIDA_MS,
+                    hasta = fecha + Claves.VENTANA_REPETIDA_MS,
+                )
+            ) return Resultado.REPETIDO
 
             val gemela = dao.candidatasGemelas(
                 monto = pago.monto,
@@ -99,7 +115,7 @@ object Registro {
         for (n in FinanzasDb.get(ctx).dao().crudasEtiquetadas()) {
             val fuente = Fuentes.para(n.paquete) ?: continue
             val pago = fuente.parse(n.titulo, n.texto)?.copy(tipo = n.etiqueta ?: continue) ?: continue
-            val clave = Claves.de(fuente.id, sbnKey = "", n.titulo, n.texto)
+            val clave = Claves.de(fuente.id, sbnKey = "", n.titulo, n.texto, n.fecha)
             if (registrarPago(ctx, pago, fuente.id, n.fecha, clave) == Resultado.NUEVO) nuevas++
         }
         return nuevas

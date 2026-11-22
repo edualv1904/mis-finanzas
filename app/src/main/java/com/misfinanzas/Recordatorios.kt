@@ -58,7 +58,7 @@ class RecordatorioPagoWorker(ctx: Context, params: WorkerParameters) : Coroutine
             ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
         val n = NotificationCompat.Builder(ctx, CANAL)
-            .setSmallIcon(android.R.drawable.ic_menu_agenda)
+            .setSmallIcon(R.drawable.ic_notificacion)
             .setContentTitle(titulo)
             .setContentText(texto)
             .setContentIntent(abrir)

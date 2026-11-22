@@ -2,6 +2,7 @@ package com.misfinanzas
 
 import com.misfinanzas.data.Transaccion
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -106,6 +107,21 @@ class ParsersTest {
         assertEquals(RappiParser, Fuentes.para("com.grability.rappi"))
         assertEquals(BanamexParser, Fuentes.para("com.citibanamex.banamexmobile"))
         assertNull(Fuentes.para("com.whatsapp"))
+    }
+
+    @Test
+    fun clavesDeBancoLlevanLaHora() {
+        // Dos recargas iguales de Mercado Pago en días distintos traen el mismo texto: deben ser dos llaves.
+        val t = "Compra por \$ 25 fue aprobada"
+        val x = "Ve los detalles de tu compra en MERPAGO*TELCEL aquí."
+        val a = Claves.de("mercadopago", "k", t, x, 1_000_000L)
+        val b = Claves.de("mercadopago", "k", t, x, 2_000_000L)
+        assertNotEquals(a, b)
+        assertEquals("mercadopago|$t|$x|1000000", a)
+        // La parte sin hora es la llave vieja, con la que se reconocen los movimientos anteriores.
+        assertEquals(Claves.de("mercadopago", "k", t, x), a.substringBeforeLast('|'))
+        // Wallet no cambia: solo su key.
+        assertEquals("wallet|k", Claves.de("wallet", "k", t, x, 1_000_000L))
     }
 
     @Test

@@ -105,4 +105,46 @@ class FinanzasViewModel(app: Application) : AndroidViewModel(app) {
 
     fun marcarDuplicado(quitar: Transaccion, conservar: Transaccion) =
         viewModelScope.launch { Registro.marcarDuplicado(getApplication(), quitar, conservar) }
+
+    // ---------- Me deben ----------
+
+    init {
+        viewModelScope.launch { Cobros.generar(getApplication()) }
+    }
+
+    val acuerdos: StateFlow<List<com.misfinanzas.data.Acuerdo>> = dao.observarAcuerdos()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val cobros: StateFlow<List<com.misfinanzas.data.Cobro>> = dao.observarCobros()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Transferencias recibidas en los últimos 90 días: posibles pagos de quien te debe. */
+    val ingresosRecientes: StateFlow<List<Transaccion>> = dao.observarIngresosDesde(System.currentTimeMillis() - 90L * 86_400_000L)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun crearAcuerdo(d: com.misfinanzas.ui.Datos) = viewModelScope.launch {
+        val desde = if (d.meses == 1) Cobros.mesDeUnaVez(java.time.LocalDate.now(), d.dia) else null
+        Cobros.crear(getApplication(), d.personas, d.concepto, d.monto, d.dia, d.meses, d.actual, d.esteMesPagado, desde)
+    }
+
+    fun editarAcuerdo(a: com.misfinanzas.data.Acuerdo) = viewModelScope.launch { Cobros.editar(getApplication(), a) }
+
+    fun marcarCobro(c: com.misfinanzas.data.Cobro, pagado: Long?, abonoId: Long?) = viewModelScope.launch {
+        dao.marcarCobro(c.id, pagado, abonoId)
+        // Deshacer en un acuerdo que ya se había cerrado solo (todo pagado): vuelve a estar activo.
+        if (pagado == null) acuerdos.value.firstOrNull { it.id == c.acuerdoId && !it.activo }?.let { dao.actualizarAcuerdo(it.copy(activo = true)) }
+        Cobros.generar(getApplication())
+    }
+
+    fun cambiarMontoCobro(c: com.misfinanzas.data.Cobro, monto: Double) = viewModelScope.launch { dao.cambiarMontoCobro(c.id, monto) }
+
+    fun terminarAcuerdo(a: com.misfinanzas.data.Acuerdo) = viewModelScope.launch {
+        dao.actualizarAcuerdo(a.copy(activo = false))
+        dao.borrarCobrosPendientes(a.id)
+    }
+
+    fun borrarAcuerdo(a: com.misfinanzas.data.Acuerdo) = viewModelScope.launch {
+        dao.borrarCobros(a.id)
+        dao.borrarAcuerdo(a.id)
+    }
 }
