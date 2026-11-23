@@ -72,6 +72,7 @@ fun PantallaPrincipal(
     abrirAjustesNotificaciones: () -> Unit,
     botonMenu: @Composable () -> Unit,
     vm: FinanzasViewModel = viewModel(),
+    grupos: DatosGrupos? = null,
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -91,6 +92,7 @@ fun PantallaPrincipal(
 
     var pestana by remember { mutableIntStateOf(0) }
     var editando by remember { mutableStateOf<Transaccion?>(null) }
+    var compartiendo by remember { mutableStateOf<Transaccion?>(null) }
 
     Scaffold(
         topBar = {
@@ -153,6 +155,24 @@ fun PantallaPrincipal(
             onQuitarMeses = { vm.quitarMeses(t); editando = null },
             buscarDuplicados = (suspend { vm.posiblesDuplicados(t) }).takeIf { t.id != 0L && t.fuente != Meses.FUENTE },
             onDuplicadoDe = { conservar -> vm.marcarDuplicado(t, conservar); editando = null },
+            onCompartir = { compartiendo = t; editando = null }
+                .takeIf { grupos != null && t.id != 0L && t.tipo == Tipos.GASTO },
+            enGrupo = grupos?.deTransaccion(t.id)?.let { x ->
+                "En ${grupos.grupos.firstOrNull { it.id == x.grupoId }?.nombre ?: "un split"} · tu parte ${dinero(t.mio)}"
+            },
+        )
+    }
+    val c = compartiendo
+    if (c != null && grupos != null) {
+        val existente = grupos.deTransaccion(c.id)
+        DialogoGastoGrupo(
+            grupos = if (existente != null) grupos.grupos.filter { it.id == existente.grupoId } else grupos.grupos.filter { it.activo },
+            datos = grupos,
+            inicial = existente,
+            transaccion = c,
+            onGuardar = { x, p, f -> vm.guardarGrupoGasto(x, p, f); compartiendo = null },
+            onBorrar = existente?.let { x -> { vm.borrarGrupoGasto(x); compartiendo = null } },
+            onCerrar = { compartiendo = null },
         )
     }
 }
@@ -213,7 +233,8 @@ private fun AvisoUbicacion(ubicacionConcedida: Boolean, onListo: (Boolean) -> Un
     }
 }
 
-private fun List<Transaccion>.total(tipo: String) = filter { it.tipo == tipo }.sumOf { it.monto }
+/** En gastos cuenta solo tu parte de lo compartido en grupos. */
+private fun List<Transaccion>.total(tipo: String) = filter { it.tipo == tipo }.sumOf { if (tipo == Tipos.GASTO) it.mio else it.monto }
 
 /** Rótulo pequeño en mayúsculas para nombrar una cifra o una sección. */
 @Composable
@@ -306,7 +327,7 @@ private fun FilaTransaccion(t: Transaccion, onClick: () -> Unit) {
                     t.fuente == "manual" -> "${t.tarjeta} · ${hora(t.fecha)} · manual"
                     t.fuente == "estado" -> "${t.tarjeta} · estado de cuenta"
                     else -> "${t.tarjeta} · ${hora(t.fecha)}"
-                },
+                } + (t.miParte?.let { " · tu parte ${dinero(it)}" } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -325,9 +346,9 @@ private fun FilaTransaccion(t: Transaccion, onClick: () -> Unit) {
 @Composable
 private fun Resumen(todos: List<Transaccion>) {
     val lista = todos.filter { it.tipo == Tipos.GASTO }
-    val total = lista.sumOf { it.monto }.takeIf { it > 0 } ?: 1.0
-    val porCategoria = lista.groupBy { it.categoria }.mapValues { e -> e.value.sumOf { it.monto } }.toList().sortedByDescending { it.second }
-    val porTarjeta = lista.groupBy { it.tarjeta }.mapValues { e -> e.value.sumOf { it.monto } }.toList().sortedByDescending { it.second }
+    val total = lista.sumOf { it.mio }.takeIf { it > 0 } ?: 1.0
+    val porCategoria = lista.groupBy { it.categoria }.mapValues { e -> e.value.sumOf { it.mio } }.toList().sortedByDescending { it.second }
+    val porTarjeta = lista.groupBy { it.tarjeta }.mapValues { e -> e.value.sumOf { it.mio } }.toList().sortedByDescending { it.second }
 
     LazyColumn(contentPadding = PaddingValues(16.dp, 20.dp, 16.dp, 88.dp)) {
         item { Etiqueta("Por categoría", Modifier.padding(bottom = 4.dp)) }

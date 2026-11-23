@@ -52,7 +52,15 @@ data class Transaccion(
     val lon: Double? = null,
     /** Dirección legible de [lat]/[lon]; se llena cuando hay internet. */
     val lugar: String? = null,
-)
+    /**
+     * Gasto compartido en un grupo: lo que te toca a ti. Es lo que suma en "Gastado" (la tarjeta sigue
+     * contando [monto] completo). Null = todo es tuyo.
+     */
+    val miParte: Double? = null,
+) {
+    /** Lo que de verdad gastaste tú. */
+    val mio get() = miParte ?: monto
+}
 
 /** Recuerda la categoría que elegiste para cada comercio. */
 @Entity(tableName = "categoria_comercio")
@@ -168,6 +176,49 @@ data class DeudaMov(
     val transaccionId: Long? = null,
 )
 
+/** Un viaje o una cuenta compartida (estilo Splitwise). Tú siempre estás; [GrupoMiembro] son los demás. */
+@Entity(tableName = "grupos")
+data class Grupo(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val nombre: String,
+    val creado: Long = System.currentTimeMillis(),
+    val activo: Boolean = true,
+)
+
+@Entity(tableName = "grupo_miembros", indices = [Index(value = ["grupoId", "persona"], unique = true)])
+data class GrupoMiembro(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val grupoId: Long,
+    val persona: String,
+)
+
+/**
+ * Un gasto del grupo ([com.misfinanzas.Grupos.GASTO]: [pago] pagó [monto] y se reparte en
+ * [GrupoParte]) o un pago entre ellos ([com.misfinanzas.Grupos.PAGO]: [pago] le dio el dinero a
+ * quien dice su única parte). [pago] es un nombre o [com.misfinanzas.Grupos.YO].
+ */
+@Entity(tableName = "grupo_gastos", indices = [Index("grupoId")])
+data class GrupoGasto(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val grupoId: Long,
+    val fecha: Long,
+    val concepto: String,
+    val monto: Double,
+    val pago: String,
+    val tipo: String,
+    /** Tu movimiento de tarjeta con el que pagaste, si salió de ahí. */
+    val transaccionId: Long? = null,
+)
+
+/** Cuánto le toca a cada quien de un [GrupoGasto]. */
+@Entity(tableName = "grupo_partes", indices = [Index("gastoId")])
+data class GrupoParte(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val gastoId: Long,
+    val persona: String,
+    val monto: Double,
+)
+
 /** Ideas que apuntas fuera de casa para platicarlas después. */
 @Entity(tableName = "notas")
 data class Nota(
@@ -181,11 +232,11 @@ interface TransaccionDao {
     @Query("SELECT * FROM transacciones WHERE fecha >= :desde AND fecha < :hasta ORDER BY fecha DESC")
     fun observarRango(desde: Long, hasta: Long): Flow<List<Transaccion>>
 
-    @Query("SELECT COALESCE(SUM(monto), 0) FROM transacciones WHERE tipo = 'gasto' AND fecha >= :desde AND fecha < :hasta")
+    @Query("SELECT COALESCE(SUM(COALESCE(miParte, monto)), 0) FROM transacciones WHERE tipo = 'gasto' AND fecha >= :desde AND fecha < :hasta")
     suspend fun sumaGastos(desde: Long, hasta: Long): Double
 
     /** Igual que [sumaGastos] pero se vuelve a emitir cada vez que cambian los movimientos. */
-    @Query("SELECT COALESCE(SUM(monto), 0) FROM transacciones WHERE tipo = 'gasto' AND fecha >= :desde AND fecha < :hasta")
+    @Query("SELECT COALESCE(SUM(COALESCE(miParte, monto)), 0) FROM transacciones WHERE tipo = 'gasto' AND fecha >= :desde AND fecha < :hasta")
     fun observarSumaGastos(desde: Long, hasta: Long): Flow<Double>
 
     @Query(
@@ -352,6 +403,88 @@ interface TransaccionDao {
     @Query("DELETE FROM cobros WHERE acuerdoId = :acuerdoId AND pagado IS NULL AND numero > :ultimo")
     suspend fun borrarCobrosDespuesDe(acuerdoId: Long, ultimo: Int)
 
+    // ---------- Personas ----------
+
+    @Query("UPDATE acuerdos SET persona = :nombre WHERE id IN (:ids)")
+    suspend fun renombrarAcuerdos(ids: List<Long>, nombre: String)
+
+    @Query("UPDATE deudas SET persona = :nombre WHERE id IN (:ids)")
+    suspend fun renombrarDeudas(ids: List<Long>, nombre: String)
+
+    // ---------- Grupos ----------
+
+    @Query("SELECT * FROM grupos ORDER BY activo DESC, creado DESC")
+    fun observarGrupos(): Flow<List<Grupo>>
+
+    @Query("SELECT * FROM grupos")
+    suspend fun gruposTodos(): List<Grupo>
+
+    @Query("SELECT * FROM grupo_gastos")
+    suspend fun grupoGastosTodos(): List<GrupoGasto>
+
+    @Query("SELECT * FROM grupo_miembros")
+    suspend fun miembrosTodos(): List<GrupoMiembro>
+
+    @Query("SELECT * FROM grupo_partes")
+    suspend fun partesTodas(): List<GrupoParte>
+
+    @Query("SELECT * FROM grupo_miembros")
+    fun observarMiembros(): Flow<List<GrupoMiembro>>
+
+    @Query("SELECT * FROM grupo_gastos ORDER BY fecha DESC, id DESC")
+    fun observarGrupoGastos(): Flow<List<GrupoGasto>>
+
+    @Query("SELECT * FROM grupo_partes")
+    fun observarGrupoPartes(): Flow<List<GrupoParte>>
+
+    @Insert
+    suspend fun insertarGrupo(g: Grupo): Long
+
+    @Update
+    suspend fun actualizarGrupo(g: Grupo)
+
+    @Query("DELETE FROM grupos WHERE id = :id")
+    suspend fun borrarGrupo(id: Long)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertarMiembros(m: List<GrupoMiembro>)
+
+    @Query("DELETE FROM grupo_miembros WHERE grupoId = :grupoId AND persona NOT IN (:quedan)")
+    suspend fun quitarMiembros(grupoId: Long, quedan: List<String>)
+
+    @Query("DELETE FROM grupo_miembros WHERE grupoId = :grupoId")
+    suspend fun borrarMiembros(grupoId: Long)
+
+    @Query("SELECT * FROM grupo_gastos WHERE grupoId = :grupoId")
+    suspend fun gastosDeGrupo(grupoId: Long): List<GrupoGasto>
+
+    @Insert
+    suspend fun insertarGrupoGasto(g: GrupoGasto): Long
+
+    @Update
+    suspend fun actualizarGrupoGasto(g: GrupoGasto)
+
+    @Query("DELETE FROM grupo_gastos WHERE id = :id")
+    suspend fun borrarGrupoGasto(id: Long)
+
+    @Insert
+    suspend fun insertarPartes(p: List<GrupoParte>)
+
+    @Query("DELETE FROM grupo_partes WHERE gastoId = :gastoId")
+    suspend fun borrarPartes(gastoId: Long)
+
+    @Query("UPDATE transacciones SET miParte = :miParte WHERE id = :id")
+    suspend fun ponerMiParte(id: Long, miParte: Double?)
+
+    @Query("UPDATE grupo_miembros SET persona = :nombre WHERE id IN (:ids)")
+    suspend fun renombrarMiembros(ids: List<Long>, nombre: String)
+
+    @Query("UPDATE grupo_gastos SET pago = :nombre WHERE pago = :viejo")
+    suspend fun renombrarPagador(viejo: String, nombre: String)
+
+    @Query("UPDATE grupo_partes SET persona = :nombre WHERE persona = :viejo")
+    suspend fun renombrarEnPartes(viejo: String, nombre: String)
+
     // ---------- Debo ----------
 
     @Query("SELECT * FROM deudas ORDER BY persona COLLATE NOCASE")
@@ -426,7 +559,7 @@ interface TransaccionDao {
     fun observarTarjetas(): Flow<List<String>>
 }
 
-@Database(entities = [Transaccion::class, CategoriaComercio::class, NotificacionCruda::class, Nota::class, TarjetaConfig::class, ClaveDescartada::class, Acuerdo::class, Cobro::class, Deuda::class, DeudaMov::class], version = 13, exportSchema = false)
+@Database(entities = [Transaccion::class, CategoriaComercio::class, NotificacionCruda::class, Nota::class, TarjetaConfig::class, ClaveDescartada::class, Acuerdo::class, Cobro::class, Deuda::class, DeudaMov::class, Grupo::class, GrupoMiembro::class, GrupoGasto::class, GrupoParte::class], version = 14, exportSchema = false)
 abstract class FinanzasDb : RoomDatabase() {
     abstract fun dao(): TransaccionDao
 
@@ -437,7 +570,7 @@ abstract class FinanzasDb : RoomDatabase() {
             instancia ?: synchronized(this) {
                 instancia ?: Room.databaseBuilder(
                     context.applicationContext, FinanzasDb::class.java, "finanzas.db"
-                ).addMigrations(MIGRACION_1_2, MIGRACION_2_3, MIGRACION_3_4, MIGRACION_4_5, MIGRACION_5_6, MIGRACION_6_7, MIGRACION_7_8, MIGRACION_8_9, MIGRACION_9_10, MIGRACION_10_11, MIGRACION_11_12, MIGRACION_12_13).build().also { instancia = it }
+                ).addMigrations(MIGRACION_1_2, MIGRACION_2_3, MIGRACION_3_4, MIGRACION_4_5, MIGRACION_5_6, MIGRACION_6_7, MIGRACION_7_8, MIGRACION_8_9, MIGRACION_9_10, MIGRACION_10_11, MIGRACION_11_12, MIGRACION_12_13, MIGRACION_13_14).build().also { instancia = it }
             }
     }
 }
@@ -615,5 +748,28 @@ private val MIGRACION_10_11 = object : Migration(10, 11) {
         db.execSQL("ALTER TABLE transacciones ADD COLUMN lat REAL")
         db.execSQL("ALTER TABLE transacciones ADD COLUMN lon REAL")
         db.execSQL("ALTER TABLE transacciones ADD COLUMN lugar TEXT")
+    }
+}
+
+/** Grupos y viajes (estilo Splitwise), y "tu parte" de un gasto compartido. */
+internal val SQL_13_14 = listOf(
+    "ALTER TABLE transacciones ADD COLUMN miParte REAL",
+    "CREATE TABLE IF NOT EXISTS grupos (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, nombre TEXT NOT NULL, " +
+        "creado INTEGER NOT NULL, activo INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS grupo_miembros (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, grupoId INTEGER NOT NULL, " +
+        "persona TEXT NOT NULL)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS index_grupo_miembros_grupoId_persona ON grupo_miembros(grupoId, persona)",
+    "CREATE TABLE IF NOT EXISTS grupo_gastos (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, grupoId INTEGER NOT NULL, " +
+        "fecha INTEGER NOT NULL, concepto TEXT NOT NULL, monto REAL NOT NULL, pago TEXT NOT NULL, tipo TEXT NOT NULL, " +
+        "transaccionId INTEGER)",
+    "CREATE INDEX IF NOT EXISTS index_grupo_gastos_grupoId ON grupo_gastos(grupoId)",
+    "CREATE TABLE IF NOT EXISTS grupo_partes (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, gastoId INTEGER NOT NULL, " +
+        "persona TEXT NOT NULL, monto REAL NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS index_grupo_partes_gastoId ON grupo_partes(gastoId)",
+)
+
+private val MIGRACION_13_14 = object : Migration(13, 14) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        SQL_13_14.forEach(db::execSQL)
     }
 }

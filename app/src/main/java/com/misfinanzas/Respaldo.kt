@@ -36,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -63,6 +64,11 @@ object Respaldo {
     private const val ULTIMO = "ultimo"
     private const val ERROR = "error"
     private const val CARPETA = "carpeta"
+    private const val TICKETS = "tickets"
+
+    /** Nunca dos respaldos a la vez (el del sábado y el de un split): así no se crea una carpeta dos veces. */
+    private val candado = kotlinx.coroutines.sync.Mutex()
+    private const val SPLITS = "splits"
 
     const val NOMBRE_CARPETA = "Respaldos Mis Finanzas"
     /** Semanas de respaldo que se conservan en Drive. */
@@ -174,7 +180,7 @@ object Respaldo {
     // ---------- Respaldo ----------
 
     /** Copia la base y la sube. Devuelve null si salió bien, o el mensaje de error. */
-    suspend fun respaldar(ctx: Context, token: String): String? = withContext(Dispatchers.IO) {
+    suspend fun respaldar(ctx: Context, token: String): String? = withContext(Dispatchers.IO) { candado.withLock {
         trabajando = true
         try {
             val copia = copiaDeLaBase(ctx)
@@ -185,8 +191,16 @@ object Respaldo {
             drive.listar("'$carpeta' in parents and name = '$nombre' and trashed = false").forEach { drive.borrar(it.first) }
             drive.subir(nombre, carpeta, copia)
             copia.delete()
-            drive.listar("'$carpeta' in parents and trashed = false", "createdTime desc")
+            // Solo los respaldos (finanzas-*.db): las carpetas "Split - …" de los tickets no se tocan.
+            drive.listar("'$carpeta' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'", "createdTime desc")
+                .filter { it.second.startsWith("finanzas-") && it.second.endsWith(".db") }
                 .drop(CONSERVAR).forEach { drive.borrar(it.first) }
+            // Si fallan los tickets, el respaldo de la base ya quedó: se reintentan la próxima vez.
+            try {
+                sincronizarSplits(ctx, drive, carpeta)
+            } catch (e: Exception) {
+                Log.w(TAG, "No se pudieron subir los tickets", e)
+            }
             ultimo = System.currentTimeMillis()
             prefs(ctx).edit().putLong(ULTIMO, ultimo).apply()
             ponerError(ctx, null)
@@ -201,6 +215,123 @@ object Respaldo {
         } finally {
             trabajando = false
         }
+    } }
+
+    /**
+     * Sube a la carpeta "Split - <nombre>" de cada split (dentro de la de respaldos) sus fotos de tickets
+     * nuevas o cambiadas y "Resumen - <nombre>.md" si cambió; renombra la carpeta si cambiaste el nombre y
+     * borra de Drive lo que borraste en la app. Con [soloGrupo], solo ese split (al terminarlo).
+     * Recuerda lo subido en las preferencias: archivo → id en Drive + huella. Nunca crea una carpeta que
+     * ya tiene: guarda su id y la reutiliza.
+     */
+    private suspend fun sincronizarSplits(ctx: Context, drive: Drive, raiz: String, soloGrupo: Long? = null) {
+        val dao = FinanzasDb.get(ctx).dao()
+        val grupos = dao.gruposTodos()
+        val gastosLista = dao.grupoGastosTodos()
+        val gastos = gastosLista.associateBy { it.id }
+        val datos = com.misfinanzas.ui.DatosGrupos(grupos, dao.miembrosTodos(), gastosLista, dao.partesTodas())
+        val p = prefs(ctx)
+        val subidos = JSONObject(p.getString(TICKETS, null) ?: "{}")
+        val carpetas = JSONObject(p.getString(SPLITS, null) ?: "{}")
+        val vivos = HashSet<String>()
+        val guardar = {
+            p.edit().putString(TICKETS, subidos.toString()).putString(SPLITS, carpetas.toString()).apply()
+        }
+        val patron = Regex("""gasto-(\d+)-(\d+)\.jpg""")
+        val prohibidos = Regex("""[\\/:*?"<>|]""")
+        val nombreFoto = { f: File ->
+            val m = patron.find(f.name)
+            val gasto = m?.groupValues?.get(1)?.toLongOrNull()?.let { gastos[it] }
+            val fecha = gasto?.let { diaDe(it.fecha).toString() } ?: ""
+            val concepto = gasto?.concepto?.replace(prohibidos, " ")?.trim() ?: "ticket"
+            "$fecha $concepto (${m?.groupValues?.get(2) ?: "1"}).jpg".trim()
+        }
+        for (g in grupos.filter { soloGrupo == null || it.id == soloGrupo }) {
+            val clave = g.id.toString()
+            val fotos = Tickets.carpetaGrupo(ctx, g.id).listFiles { f -> patron.matches(f.name) }.orEmpty().sortedBy { it.name }
+            val previa = carpetas.optJSONObject(clave)
+            // Un split sin gastos ni carpeta todavía no necesita nada en Drive.
+            if (previa == null && datos.gastosDe[g.id].isNullOrEmpty()) continue
+            val nombre = "Split - ${g.nombre}".replace(prohibidos, " ")
+            val idCarpeta = previa?.optString("id")?.takeIf { it.isNotEmpty() && drive.existe(it) }
+                ?: drive.crearCarpeta(nombre, raiz).also { nueva ->
+                    // Carpeta nueva (o la borraron en Drive): se vuelve a subir todo lo de este split.
+                    subidos.keys().asSequence().toList().filter { it.startsWith("$clave/") }.forEach { subidos.remove(it) }
+                    carpetas.put(clave, JSONObject().put("id", nueva).put("nombre", nombre))
+                    guardar()
+                }
+            val info = carpetas.getJSONObject(clave)
+            if (info.optString("nombre") != nombre) {
+                drive.renombrar(idCarpeta, nombre)
+                info.put("nombre", nombre)
+                // El resumen lleva el nombre del split: se vuelve a subir con el nuevo.
+                info.remove("resumenHuella")
+                guardar()
+            }
+            for (f in fotos) {
+                val k = "$clave/${f.name}"
+                val huella = "${f.length()}-${f.lastModified()}"
+                vivos += k
+                val antes = subidos.optString(k)
+                if (antes.endsWith("|$huella")) continue
+                if (antes.isNotEmpty()) runCatching { drive.borrar(antes.substringBefore("|")) }
+                subidos.put(k, drive.subir(nombreFoto(f), idCarpeta, f, "image/jpeg") + "|$huella")
+                guardar()
+            }
+            // Resumen en Markdown, solo si cambió algo.
+            val fotosPorGasto = fotos.groupBy { patron.find(it.name)?.groupValues?.get(1)?.toLongOrNull() ?: -1L }
+                .mapValues { e -> e.value.map(nombreFoto) }
+            val texto = ResumenSplit.texto(g, datos, markdown = true, fotos = fotosPorGasto)
+            val huella = texto.hashCode().toString()
+            if (info.optString("resumenHuella") != huella) {
+                info.optString("resumen").takeIf { it.isNotEmpty() }?.let { runCatching { drive.borrar(it) } }
+                val tmp = File(ctx.cacheDir, "resumen-split.md").apply { writeText(texto) }
+                info.put("resumen", drive.subir("Resumen - ${g.nombre}.md".replace(Regex("""[\\/:*?"<>|]"""), " "), idCarpeta, tmp, "text/markdown"))
+                info.put("resumenHuella", huella)
+                tmp.delete()
+                guardar()
+            }
+        }
+        // Lo que ya no está en la app: fotos borradas y splits borrados.
+        for (k in subidos.keys().asSequence().toList().filter { k -> k !in vivos && (soloGrupo == null || k.startsWith("$soloGrupo/")) }) {
+            runCatching { drive.borrar(subidos.getString(k).substringBefore("|")) }
+            subidos.remove(k)
+        }
+        if (soloGrupo == null) {
+            val existentes = grupos.map { it.id.toString() }.toSet()
+            for (id in carpetas.keys().asSequence().toList().filter { it !in existentes }) {
+                runCatching { drive.borrar(carpetas.getJSONObject(id).getString("id")) }
+                carpetas.remove(id)
+            }
+        }
+        guardar()
+    }
+
+    /** Respalda en Drive un solo split (al terminarlo): fotos y resumen. Null si salió bien; si no, el error. */
+    suspend fun respaldarSplit(ctx: Context, token: String, grupoId: Long): String? = withContext(Dispatchers.IO) {
+        candado.withLock {
+            try {
+                val drive = Drive(token)
+                sincronizarSplits(ctx, drive, carpeta(ctx, drive), soloGrupo = grupoId)
+                null
+            } catch (e: Exception) {
+                Log.w(TAG, "Falló el respaldo del split", e)
+                if (e is Drive.HttpError && e.codigo == 401) "Google pidió volver a conectar Drive."
+                else "No se pudo subir el split (${e.message ?: e.javaClass.simpleName})."
+            }
+        }
+    }
+
+    /** Al terminar un split: lo sube en cuanto haya internet (cualquier red; son pocos KB). */
+    fun programarSplit(ctx: Context, grupoId: Long) {
+        WorkManager.getInstance(ctx).enqueueUniqueWork(
+            "split-$grupoId",
+            androidx.work.ExistingWorkPolicy.REPLACE,
+            androidx.work.OneTimeWorkRequestBuilder<SplitWorker>()
+                .setInputData(androidx.work.workDataOf("grupo" to grupoId))
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .build(),
+        )
     }
 
     /** Copia consistente de la base aunque la app la esté usando. */
@@ -260,6 +391,32 @@ object Respaldo {
     fun diaDe(millis: Long): LocalDate = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
 }
 
+/** Sube un split que acabas de terminar (ver [Respaldo.programarSplit]). */
+class SplitWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
+    override suspend fun doWork(): Result {
+        val ctx = applicationContext
+        val grupoId = inputData.getLong("grupo", -1)
+        Respaldo.cargar(ctx)
+        if (grupoId < 0 || !Respaldo.conectado) return Result.success()
+        val token = try {
+            Respaldo.tokenEnSilencio(ctx)
+        } catch (e: Exception) {
+            return if (runAttemptCount < 3) Result.retry() else Result.success()
+        }
+        if (token == null) {
+            Respaldo.avisar(ctx, "Abre Mis Finanzas y vuelve a conectar Drive para guardar el split.")
+            return Result.success()
+        }
+        val nombre = FinanzasDb.get(ctx).dao().gruposTodos().firstOrNull { it.id == grupoId }?.nombre ?: return Result.success()
+        val error = Respaldo.respaldarSplit(ctx, token, grupoId)
+        return when {
+            error == null -> { Respaldo.avisar(ctx, "Split \"$nombre\" guardado en Drive con su resumen y sus tickets."); Result.success() }
+            runAttemptCount < 3 -> Result.retry()
+            else -> { Respaldo.avisar(ctx, error); Result.success() }
+        }
+    }
+}
+
 class RespaldoWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
         val ctx = applicationContext
@@ -291,7 +448,11 @@ private class Drive(private val token: String) {
 
     private fun pedir(metodo: String, url: String, tipo: String? = null, cuerpo: ByteArray? = null): String {
         val c = URL(url).openConnection() as HttpURLConnection
-        c.requestMethod = metodo
+        // HttpURLConnection no sabe hacer PATCH: Google acepta un POST con el método en este encabezado.
+        if (metodo == "PATCH") {
+            c.requestMethod = "POST"
+            c.setRequestProperty("X-HTTP-Method-Override", "PATCH")
+        } else c.requestMethod = metodo
         c.connectTimeout = 20_000
         c.readTimeout = 60_000
         c.setRequestProperty("Authorization", "Bearer $token")
@@ -322,20 +483,26 @@ private class Drive(private val token: String) {
         if (e.codigo == 404) false else throw e
     }
 
-    fun crearCarpeta(nombre: String): String {
+    fun crearCarpeta(nombre: String, dentroDe: String? = null): String {
         val meta = JSONObject().put("name", nombre).put("mimeType", "application/vnd.google-apps.folder")
+        dentroDe?.let { meta.put("parents", JSONArray().put(it)) }
         return JSONObject(pedir("POST", "$API/files?fields=id", "application/json; charset=UTF-8", meta.toString().toByteArray())).getString("id")
     }
 
-    fun subir(nombre: String, carpeta: String, archivo: File) {
+    /** Sube [archivo] a [carpeta] y devuelve su id en Drive. */
+    fun subir(nombre: String, carpeta: String, archivo: File, tipo: String = "application/x-sqlite3"): String {
         val limite = "finanzas${System.nanoTime()}"
-        val meta = JSONObject().put("name", nombre).put("parents", JSONArray().put(carpeta)).put("mimeType", "application/x-sqlite3")
+        val meta = JSONObject().put("name", nombre).put("parents", JSONArray().put(carpeta)).put("mimeType", tipo)
         val cuerpo = buildList<ByteArray> {
-            add("--$limite\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n$meta\r\n--$limite\r\nContent-Type: application/x-sqlite3\r\n\r\n".toByteArray())
+            add("--$limite\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n$meta\r\n--$limite\r\nContent-Type: $tipo\r\n\r\n".toByteArray())
             add(archivo.readBytes())
             add("\r\n--$limite--\r\n".toByteArray())
         }.reduce { a, b -> a + b }
-        pedir("POST", "$SUBIR/files?uploadType=multipart&fields=id", "multipart/related; boundary=$limite", cuerpo)
+        return JSONObject(pedir("POST", "$SUBIR/files?uploadType=multipart&fields=id", "multipart/related; boundary=$limite", cuerpo)).getString("id")
+    }
+
+    fun renombrar(id: String, nombre: String) {
+        pedir("PATCH", "$API/files/$id", "application/json; charset=UTF-8", JSONObject().put("name", nombre).toString().toByteArray())
     }
 
     fun borrar(id: String) {

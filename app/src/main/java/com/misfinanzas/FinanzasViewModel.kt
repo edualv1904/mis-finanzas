@@ -110,6 +110,11 @@ class FinanzasViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch { Cobros.generar(getApplication()) }
+        // Fotos de ticket tomadas en un gasto que al final no se guardó.
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val viejas = System.currentTimeMillis() - 6L * 3_600_000L
+            Tickets.carpetaPendientes(getApplication()).listFiles().orEmpty().filter { it.lastModified() < viejas }.forEach { it.delete() }
+        }
     }
 
     val acuerdos: StateFlow<List<com.misfinanzas.data.Acuerdo>> = dao.observarAcuerdos()
@@ -146,6 +151,58 @@ class FinanzasViewModel(app: Application) : AndroidViewModel(app) {
     fun borrarAcuerdo(a: com.misfinanzas.data.Acuerdo) = viewModelScope.launch {
         dao.borrarCobros(a.id)
         dao.borrarAcuerdo(a.id)
+    }
+
+    // ---------- Personas ----------
+
+    /** Cambia el nombre en todo lo de esa persona (también sirve para unir "Anabel" con "Ana"). */
+    fun renombrarPersona(p: Personas.Perfil, nombre: String) = viewModelScope.launch {
+        dao.renombrarAcuerdos(p.acuerdos.map { it.id }, nombre)
+        dao.renombrarDeudas(p.deudas.map { it.id }, nombre)
+        val enGrupos = miembros.value.filter { Personas.clave(it.persona) == p.clave }
+        dao.renombrarMiembros(enGrupos.map { it.id }, nombre)
+        for (viejo in enGrupos.map { it.persona }.distinct()) {
+            dao.renombrarPagador(viejo, nombre)
+            dao.renombrarEnPartes(viejo, nombre)
+        }
+    }
+
+    // ---------- Grupos ----------
+
+    val grupos: StateFlow<List<com.misfinanzas.data.Grupo>> = dao.observarGrupos()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val miembros: StateFlow<List<com.misfinanzas.data.GrupoMiembro>> = dao.observarMiembros()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val grupoGastos: StateFlow<List<com.misfinanzas.data.GrupoGasto>> = dao.observarGrupoGastos()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val grupoPartes: StateFlow<List<com.misfinanzas.data.GrupoParte>> = dao.observarGrupoPartes()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun crearGrupo(nombre: String, personas: List<String>) = viewModelScope.launch { Grupos.crear(getApplication(), nombre, personas) }
+    fun editarGrupo(g: com.misfinanzas.data.Grupo, personas: List<String>) = viewModelScope.launch {
+        val estaba = grupos.value.firstOrNull { it.id == g.id }
+        Grupos.editar(getApplication(), g, personas)
+        // Al terminar el split se guarda en Drive (fotos + resumen) en cuanto haya internet.
+        if (estaba?.activo == true && !g.activo) Respaldo.programarSplit(getApplication(), g.id)
+        com.misfinanzas.widget.SplitWidget.refrescar(getApplication())
+    }
+    fun borrarGrupo(g: com.misfinanzas.data.Grupo) = viewModelScope.launch {
+        Grupos.borrar(getApplication(), g)
+        com.misfinanzas.widget.SplitWidget.refrescar(getApplication())
+    }
+    fun guardarGrupoGasto(g: com.misfinanzas.data.GrupoGasto, partes: Map<String, Double>, fotos: List<java.io.File>? = null) =
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            Grupos.guardarGasto(getApplication(), g, partes, fotos)
+            ticketsCambiados.value++
+            com.misfinanzas.widget.SplitWidget.refrescar(getApplication())
+        }
+
+    /** Sube cada vez que cambian las fotos de tickets, para que la lista vuelva a leer cuántas hay. */
+    val ticketsCambiados = MutableStateFlow(0)
+    fun borrarGrupoGasto(g: com.misfinanzas.data.GrupoGasto) = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        Grupos.borrarGasto(getApplication(), g)
+        ticketsCambiados.value++
+        com.misfinanzas.widget.SplitWidget.refrescar(getApplication())
     }
 
     // ---------- Debo ----------

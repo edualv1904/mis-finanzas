@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Mis Finanzas</string>
+    <string name="widget_split_descripcion">Un split (viaje, cena…): cuánto debes y + Gasto</string>
     <string name="widget_descripcion">Totales del mes y captura rápida de gastos</string>
 </resources>

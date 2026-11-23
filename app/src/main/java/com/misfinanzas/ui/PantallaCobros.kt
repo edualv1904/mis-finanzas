@@ -75,7 +75,7 @@ private fun sugerencia(c: Cobro, ingresos: List<Transaccion>, usados: Set<Long>)
     ingresos.firstOrNull { it.id !in usados && Cobros.coincide(it.monto, c.monto) && it.fecha >= c.vence - 25L * DIA_MS }
 
 /** "$39.83 al mes · día 4", "$1,000.00 al mes · 9 de 18 · día 15", "$500.00 · una vez · día 3". */
-private fun plan(a: Acuerdo, pagados: Int) = when (a.meses) {
+internal fun plan(a: Acuerdo, pagados: Int) = when (a.meses) {
     null -> "${dinero(a.monto)} al mes · día ${a.dia}"
     1 -> "${dinero(a.monto)} · una vez · día ${a.dia}"
     else -> "${dinero(a.monto)} al mes · $pagados de ${a.meses} · día ${a.dia}"
@@ -94,8 +94,14 @@ fun PantallaCobros(
     onTerminar: (Acuerdo) -> Unit,
     onBorrar: (Acuerdo) -> Unit,
     botonMenu: @Composable () -> Unit,
+    /** Concepto que abrir de entrada (al venir del perfil de una persona). */
+    inicial: String? = null,
+    /** Regresar al perfil de donde vino, en vez de a la lista de Me deben. */
+    onVolver: (() -> Unit)? = null,
+    /** Gente que ya tienes, para elegirla de la lista. */
+    conocidas: List<String> = emptyList(),
 ) {
-    var grupoAbierto by rememberSaveable { mutableStateOf<String?>(null) }
+    var grupoAbierto by rememberSaveable { mutableStateOf(inicial?.trim()?.lowercase()) }
     var nuevo by remember { mutableStateOf<Acuerdo?>(null) }      // plantilla al agregar a alguien a un grupo
     var nuevoVacio by remember { mutableStateOf(false) }
     var viendo by remember { mutableStateOf<Acuerdo?>(null) }
@@ -119,7 +125,8 @@ fun PantallaCobros(
 
     // El grupo abierto desapareció (lo borraste o le cambiaste el nombre): vuelve a la lista.
     val abierto = grupoAbierto?.takeIf { it in grupos }
-    BackHandler(enabled = abierto != null) { grupoAbierto = null }
+    val cerrar = { if (onVolver != null && abierto != null && abierto == inicial?.trim()?.lowercase()) onVolver() else grupoAbierto = null }
+    BackHandler(enabled = abierto != null) { cerrar() }
     // Cada vista (la lista y cada concepto) empieza desde arriba.
     val estadoLista = remember(abierto) { LazyListState() }
 
@@ -128,7 +135,7 @@ fun PantallaCobros(
             TopAppBar(
                 title = { Text(abierto?.let { grupos.getValue(it).first().concepto } ?: "Me deben") },
                 navigationIcon = {
-                    if (abierto != null) IconButton(onClick = { grupoAbierto = null }) {
+                    if (abierto != null) IconButton(onClick = cerrar) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver")
                     } else botonMenu()
                 },
@@ -268,13 +275,13 @@ fun PantallaCobros(
         }
     }
 
-    if (nuevoVacio) DialogoAcuerdo(null, onGuardar = { onCrear(it); nuevoVacio = false }, onCerrar = { nuevoVacio = false })
+    if (nuevoVacio) DialogoAcuerdo(null, conocidas = conocidas, onGuardar = { onCrear(it); nuevoVacio = false }, onCerrar = { nuevoVacio = false })
     nuevo?.let { p ->
-        DialogoAcuerdo(null, plantilla = p, onGuardar = { onCrear(it); nuevo = null }, onCerrar = { nuevo = null })
+        DialogoAcuerdo(null, plantilla = p, conocidas = conocidas, onGuardar = { onCrear(it); nuevo = null }, onCerrar = { nuevo = null })
     }
 
     editando?.let { a ->
-        DialogoAcuerdo(a, onGuardar = { d ->
+        DialogoAcuerdo(a, conocidas = conocidas, onGuardar = { d ->
             onEditar(a.copy(persona = d.personas.first(), concepto = d.concepto, monto = d.monto, dia = d.dia, meses = d.meses))
             if (grupoDe(a) == grupoAbierto) grupoAbierto = d.concepto.trim().lowercase()
             editando = null
@@ -491,10 +498,12 @@ private fun DialogoAcuerdo(
     onCerrar: () -> Unit,
     plantilla: Acuerdo? = null,
     grupo: List<Acuerdo>? = null,
+    conocidas: List<String> = emptyList(),
 ) {
     val editar = inicial != null
     val base = inicial ?: plantilla
-    var personas by remember { mutableStateOf(if (grupo == null) inicial?.persona ?: "" else "") }
+    var elegidas by remember { mutableStateOf(if (grupo == null) listOfNotNull(inicial?.persona) else emptyList()) }
+    var escrito by remember { mutableStateOf("") }
     var concepto by remember { mutableStateOf(base?.concepto ?: "") }
     var monto by remember { mutableStateOf(base?.monto?.let { "%.2f".format(it) } ?: "") }
     var dia by remember { mutableStateOf((base?.dia ?: LocalDate.now().dayOfMonth).toString()) }
@@ -505,7 +514,7 @@ private fun DialogoAcuerdo(
     var actual by remember { mutableStateOf("1") }
     var esteMesPagado by remember { mutableStateOf(false) }
 
-    val lista = personas.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    val lista = conEscrito(elegidas, escrito, conocidas, varias = !editar)
     val montoN = monto.replace(",", "").replace("$", "").trim().toDoubleOrNull()
     val diaN = dia.toIntOrNull()?.takeIf { it in 1..31 }
     val totalN = total.toIntOrNull()?.takeIf { it >= 2 }
@@ -523,9 +532,10 @@ private fun DialogoAcuerdo(
                     Tipo.entries.forEach { t -> FilterChip(tipo == t, { tipo = t }, label = { Text(t.texto) }) }
                 }
                 if (grupo != null) Text("Se aplica a: ${grupo.joinToString(", ") { it.persona }}", style = MaterialTheme.typography.bodySmall)
-                else OutlinedTextField(
-                    personas, { personas = it }, Modifier.fillMaxWidth(), label = { Text("Quién") },
-                    supportingText = { if (!editar) Text("Varias personas con lo mismo: sepáralas con comas") },
+                else CampoPersonas(
+                    elegidas, { elegidas = it }, conocidas, varias = !editar,
+                    ayuda = if (!editar && elegidas.isEmpty()) "Puedes elegir a varias con lo mismo" else null,
+                    onEscribiendo = { escrito = it },
                 )
                 OutlinedTextField(
                     concepto, { concepto = it }, Modifier.fillMaxWidth(), label = { Text("De qué") },

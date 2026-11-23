@@ -80,9 +80,15 @@ fun PantallaDebo(
     onEditarMov: (DeudaMov) -> Unit,
     onBorrarMov: (DeudaMov) -> Unit,
     botonMenu: @Composable () -> Unit,
+    /** Libreta que abrir de entrada (al venir del perfil de una persona). */
+    inicial: Long? = null,
+    /** Regresar al perfil de donde vino, en vez de a la lista de Debo. */
+    onVolver: (() -> Unit)? = null,
+    /** Gente que ya tienes, para elegirla de la lista. */
+    conocidas: List<String> = emptyList(),
 ) {
     val ctx = LocalContext.current
-    var abiertaId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var abiertaId by rememberSaveable { mutableStateOf(inicial) }
     val abierta = deudas.firstOrNull { it.id == abiertaId }
     var nueva by remember { mutableStateOf(false) }
     var editando by remember { mutableStateOf<Deuda?>(null) }
@@ -94,7 +100,8 @@ fun PantallaDebo(
     val apagado = MaterialTheme.colorScheme.onSurfaceVariant
     val ligadas = movs.mapNotNull { it.transaccionId }.toSet()
 
-    BackHandler(enabled = abierta != null) { abiertaId = null }
+    val cerrar = { if (onVolver != null && abierta != null && abierta.id == inicial) onVolver() else abiertaId = null }
+    BackHandler(enabled = abierta != null) { cerrar() }
     val estadoLista = remember(abierta?.id) { LazyListState() }
 
     Scaffold(
@@ -102,7 +109,7 @@ fun PantallaDebo(
             TopAppBar(
                 title = { Text(abierta?.persona ?: "Debo") },
                 navigationIcon = {
-                    if (abierta != null) IconButton(onClick = { abiertaId = null }) {
+                    if (abierta != null) IconButton(onClick = cerrar) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver")
                     } else botonMenu()
                 },
@@ -228,12 +235,12 @@ fun PantallaDebo(
         }
     }
 
-    if (nueva) DialogoDeuda(null, onGuardar = { persona, debes, tarifa, preguntar ->
+    if (nueva) DialogoDeuda(null, conocidas, onGuardar = { persona, debes, tarifa, preguntar ->
         onCrear(persona, debes, tarifa, preguntar); nueva = false
     }, onCerrar = { nueva = false })
 
     editando?.let { d ->
-        DialogoDeuda(d, onGuardar = { persona, _, tarifa, preguntar ->
+        DialogoDeuda(d, conocidas, onGuardar = { persona, _, tarifa, preguntar ->
             onEditar(d.copy(persona = persona, tarifa = tarifa, preguntarSabado = tarifa != null && preguntar)); editando = null
         }, onCerrar = { editando = null }, onTerminar = {
             onEditar(d.copy(activa = !d.activa)); editando = null
@@ -284,12 +291,15 @@ fun PantallaDebo(
 @Composable
 private fun DialogoDeuda(
     inicial: Deuda?,
+    conocidas: List<String>,
     onGuardar: (persona: String, debesAhora: Double?, tarifa: Double?, preguntar: Boolean) -> Unit,
     onCerrar: () -> Unit,
     onTerminar: (() -> Unit)? = null,
     onBorrar: (() -> Unit)? = null,
 ) {
-    var persona by remember { mutableStateOf(inicial?.persona ?: "") }
+    var elegidas by remember { mutableStateOf(listOfNotNull(inicial?.persona)) }
+    var escrito by remember { mutableStateOf("") }
+    val persona = conEscrito(elegidas, escrito, conocidas, varias = false).firstOrNull() ?: ""
     var debes by remember { mutableStateOf("") }
     var porSesion by remember { mutableStateOf(inicial?.tarifa != null) }
     var tarifa by remember { mutableStateOf(inicial?.tarifa?.let { "%.2f".format(it) } ?: "") }
@@ -303,7 +313,7 @@ private fun DialogoDeuda(
         title = { Text(if (inicial == null) "Le debes a alguien" else "Editar") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(persona, { persona = it }, Modifier.fillMaxWidth(), label = { Text("A quién") }, placeholder = { Text("Un amigo, la maestra…") })
+                CampoPersonas(elegidas, { elegidas = it }, conocidas, varias = false, etiqueta = "A quién", onEscribiendo = { escrito = it })
                 if (inicial == null) OutlinedTextField(
                     debes, { debes = it }, Modifier.fillMaxWidth(), label = { Text("Cuánto le debes ahorita") },
                     prefix = { Text("$") }, keyboardOptions = decimal,

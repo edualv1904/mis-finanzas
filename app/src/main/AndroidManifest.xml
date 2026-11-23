@@ -57,6 +57,36 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:windowSoftInputMode="stateVisible|adjustResize" />
 
+        <!-- Widget de split: elegir de qué split es, y la ventana flotante de "+ Gasto" -->
+        <activity
+            android:name=".widget.SplitWidgetConfigActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".widget.SplitCapturaActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:windowSoftInputMode="stateVisible|adjustResize" />
+
+        <receiver
+            android:name=".widget.SplitWidgetReceiver"
+            android:exported="true"
+            android:label="Split">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/split_widget_info" />
+        </receiver>
+
         <!-- Botones "Sí, el viernes / Sí, el sábado / No fui" de la pregunta del sábado (Debo) -->
         <receiver
             android:name=".RespuestaDeudaReceiver"
@@ -93,5 +123,15 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+        <!-- La cámara guarda ahí la foto del ticket antes de comprimirla. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.archivos"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/rutas_archivos" />
+        </provider>
     </application>
 </manifest>

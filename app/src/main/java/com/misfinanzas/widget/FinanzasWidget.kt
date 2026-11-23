@@ -149,6 +149,7 @@ class AppActualizadaReceiver : android.content.BroadcastReceiver() {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
             try {
                 FinanzasWidget().updateAll(ctx.applicationContext)
+                SplitWidget.refrescar(ctx)
             } finally {
                 pendiente.finish()
             }

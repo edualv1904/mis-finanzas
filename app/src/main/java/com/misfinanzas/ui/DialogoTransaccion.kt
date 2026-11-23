@@ -75,6 +75,10 @@ fun DialogoTransaccion(
     /** Busca movimientos del mismo monto en días cercanos; null = no se ofrece "Es duplicado". */
     buscarDuplicados: (suspend () -> List<Transaccion>)? = null,
     onDuplicadoDe: (conservar: Transaccion) -> Unit = {},
+    /** Solo en gastos ya guardados: compartirlo en un grupo (o cambiar cómo se reparte). */
+    onCompartir: (() -> Unit)? = null,
+    /** "En Viaje · tu parte $400" si ya está en un grupo. */
+    enGrupo: String? = null,
 ) {
     val esNueva = inicial.id == 0L
     var modo by remember { mutableStateOf(Modo.EDITAR) }
@@ -176,7 +180,11 @@ fun DialogoTransaccion(
                     if (buscarDuplicados != null) {
                         OutlinedButton(onClick = { modo = Modo.DUPLICADO }) { Text("Es duplicado") }
                     }
+                    if (onCompartir != null) {
+                        OutlinedButton(onClick = onCompartir) { Text(if (enGrupo != null) "Cambiar reparto" else "Agregar a un split") }
+                    }
                 }
+                if (enGrupo != null) Text(enGrupo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = {

@@ -24,6 +24,18 @@ No está en la Play Store; se instala con ADB.
 - Respaldo semanal a tu Google Drive: cada sábado, solo en el WiFi de casa, sube una copia de la base a la
   carpeta "Respaldos Mis Finanzas" y guarda las últimas 8 semanas. La app solo ve los archivos que ella crea.
 - Las notificaciones que marcas "Ignorar" se borran solas a los 30 días.
+- **Me deben**: lo que otros te pagan cada mes (su parte de una suscripción, una compra a meses que hiciste
+  por alguien), con aviso cuando se atrasan y sugerencia del depósito que parece ser su pago.
+- **Debo**: libreta de lo que le debes a alguien sin fecha fija (préstamos, clases que pagas después).
+- **Personas**: un perfil por persona que junta Me deben, Debo y Split; al dar de alta a alguien eliges de
+  la gente que ya tienes (sugiere nombres parecidos para no repetirla).
+- **Split** (estilo Splitwise): viajes y cuentas compartidas. Quién pagó qué, repartos iguales o por
+  cantidades, quién le paga a quién con el menor número de transferencias, gráfica "Cada quien", fotos del
+  ticket (blanco y negro, ~100 KB) y resumen para mandar por WhatsApp. Un gasto de tu tarjeta compartido en
+  un split solo suma **tu parte** en lo gastado. Cada split se guarda en Drive en su carpeta
+  "Split - nombre" con sus tickets y un resumen en Markdown (al terminarlo y en el respaldo semanal).
+- Widget de Split: eliges el split al ponerlo; muestra cuánto debes o te deben y tiene "+ Gasto" para
+  capturar sin abrir la app.
 - Scripts en Python para cargar los movimientos de tus estados de cuenta en PDF (lo que se pagó sin
   notificación).
 
@@ -40,10 +52,16 @@ app/src/main/java/com/misfinanzas/
   Meses.kt            Compras a meses: reparto de mensualidades
   Ubicacion.kt        Ubicación de cada compra en persona + dirección escrita
   Ajustes.kt          Preferencias (huella, ocultar cantidades)
-  Respaldo.kt         Respaldo semanal a Google Drive
+  Respaldo.kt         Respaldo semanal a Google Drive (+ carpetas de los splits)
+  Cobros.kt           Me deben
+  Deudas.kt           Debo
+  Personas.kt         Perfiles por persona
+  Grupos.kt           Split: saldos, repartos, quién le paga a quién
+  Tickets.kt          Fotos de tickets de los splits
+  ResumenSplit.kt     Resumen de un split (WhatsApp y Markdown)
   data/Db.kt          Base de datos (Room)
   ui/                 Pantallas
-  widget/             Widget + ventana de captura rápida
+  widget/             Widgets (gastos de la semana y Split) + ventana de captura del split
 app/src/test/         Pruebas de los lectores y de las fechas
 herramientas/         Scripts Python para estados de cuenta
 estados/              Tus PDFs y movimientos.csv   (NO se sube a git)
